@@ -1,0 +1,99 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+:root {
+  --color-background: var(--color-surface);
+  --color-primary: #000000;
+  --color-on-primary: #ffffff;
+  --color-secondary: #712ae2;
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #8a4cfc;
+  --color-on-secondary-container: #fffbff;
+  --color-surface: #f9f9f9;
+  --color-on-surface: #1b1b1b;
+  --color-surface-variant: #e2e2e2;
+  --color-on-surface-variant: #4c4546;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f3f3f3;
+  --color-surface-container: #eeeeee;
+  --color-surface-container-high: #e8e8e8;
+  --color-surface-container-highest: #e2e2e2;
+  --color-outline: #7e7576;
+  --color-outline-variant: #cfc4c5;
+  --color-error: #ba1a1a;
+  --color-on-error: #ffffff;
+  --color-error-container: #ffdad6;
+  --color-on-error-container: #93000a;
+}
+
+html.dark {
+  --color-primary: #ffffff;
+  --color-on-primary: #09090b;
+  --color-secondary: #a78bfa;
+  --color-on-secondary: #09090b;
+  --color-secondary-container: #2e1065;
+  --color-on-secondary-container: #fffbff;
+  --color-surface: #0c0c0e;
+  --color-on-surface: #f4f4f5;
+  --color-surface-variant: #18181b;
+  --color-on-surface-variant: #a1a1aa;
+  --color-surface-container-lowest: #151518;
+  --color-surface-container-low: #101012;
+  --color-surface-container: #1b1b1e;
+  --color-surface-container-high: #242428;
+  --color-surface-container-highest: #323238;
+  --color-outline: #71717a;
+  --color-outline-variant: #222225;
+}
+
+@theme {
+  --color-background: var(--color-background);
+  --color-primary: var(--color-primary);
+  --color-on-primary: var(--color-on-primary);
+  --color-secondary: var(--color-secondary);
+  --color-on-secondary: var(--color-on-secondary);
+  --color-secondary-container: var(--color-secondary-container);
+  --color-on-secondary-container: var(--color-on-secondary-container);
+  --color-surface: var(--color-surface);
+  --color-on-surface: var(--color-on-surface);
+  --color-surface-variant: var(--color-surface-variant);
+  --color-on-surface-variant: var(--color-on-surface-variant);
+  --color-surface-container-lowest: var(--color-surface-container-lowest);
+  --color-surface-container-low: var(--color-surface-container-low);
+  --color-surface-container: var(--color-surface-container);
+  --color-surface-container-high: var(--color-surface-container-high);
+  --color-surface-container-highest: var(--color-surface-container-highest);
+  --color-outline: var(--color-outline);
+  --color-outline-variant: var(--color-outline-variant);
+  --color-error: var(--color-error);
+  --color-on-error: var(--color-on-error);
+  --color-error-container: var(--color-error-container);
+  --color-on-error-container: var(--color-on-error-container);
+  
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* Use standard specific spacing since HTML utilizes gap-md, p-lg etc. */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 40px;
+  --spacing-gutter: 24px;
+  --spacing-margin: 32px;
+}
+
+@layer utilities {
+  .fluid-sphere {
+    background: radial-gradient(circle at 30% 30%, var(--color-secondary), transparent 70%);
+    opacity: 0.15;
+    filter: blur(60px);
+  }
+}
+
+body {
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
+  font-family: var(--font-sans);
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
