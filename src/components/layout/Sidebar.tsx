@@ -9,12 +9,16 @@ import {
   FolderOpen, 
   GraduationCap,
   HelpCircle,
-  Headset
+  Headset,
+  ChevronLeft,
+  Compass
 } from 'lucide-react';
 
 interface SidebarProps {
   currentView: ViewState;
   onViewChange: (view: ViewState) => void;
+  isCollapsed: boolean;
+  onCollapseToggle: () => void;
 }
 
 const navItems = [
@@ -24,23 +28,34 @@ const navItems = [
   { id: 'drafts', label: '稿件管理', icon: FileText },
   { id: 'projects', label: '项目管理', icon: FolderOpen },
   { id: 'learning', label: '自动学习', icon: GraduationCap },
+  { id: 'marketplace', label: '模板与插件', icon: Compass },
 ] as const;
 
-export function Sidebar({ currentView, onViewChange }: SidebarProps) {
+export function Sidebar({ currentView, onViewChange, isCollapsed, onCollapseToggle }: SidebarProps) {
   return (
-    <nav className="fixed left-0 top-0 h-full w-[280px] z-50 bg-surface-container-lowest border-r border-outline-variant/50 flex flex-col hidden md:flex">
-      <div className="px-xl h-[64px] flex items-center shrink-0">
-        <div className="flex items-center gap-sm">
-          <div className="h-6 w-6 rounded-full bg-primary shadow-sm flex-shrink-0 flex items-center justify-center">
-             <Bot className="w-4 h-4 text-on-primary" />
+    <nav className={cn(
+      "fixed left-0 top-0 h-full w-[240px] z-50 bg-surface-container-low border-r border-outline-variant/60 flex flex-col transition-all duration-300 ease-in-out",
+      isCollapsed ? "-translate-x-full md:pointer-events-none" : "translate-x-0"
+    )}>
+      <div className="px-5 h-[64px] flex items-center justify-between shrink-0 border-b border-outline-variant/10">
+        <div className="flex items-center gap-2">
+          <div className="h-7 w-7 rounded-sm bg-primary/10 text-primary flex-shrink-0 flex items-center justify-center">
+             <Bot className="w-4 h-4" />
           </div>
-          <span className="text-[20px] font-bold tracking-tight text-primary leading-none whitespace-nowrap">
-            鲸杉GEO
+          <span className="text-[15px] font-bold tracking-tight text-primary leading-none whitespace-nowrap">
+            鲸杉 GEO
           </span>
         </div>
+        <button 
+          onClick={onCollapseToggle}
+          className="p-1 rounded hover:bg-surface-container text-on-surface-variant hover:text-primary transition-colors cursor-pointer"
+          title="收起侧边栏"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
       </div>
 
-      <div className="flex-1 overflow-y-auto py-sm flex flex-col gap-xs mt-2">
+      <div className="flex-1 overflow-y-auto py-4 flex flex-col gap-1 px-3 mt-1">
         {navItems.map(({ id, label, icon: Icon }) => {
           const isActive = currentView === id;
           return (
@@ -48,26 +63,26 @@ export function Sidebar({ currentView, onViewChange }: SidebarProps) {
               key={id}
               onClick={() => onViewChange(id as ViewState)}
               className={cn(
-                "flex items-center gap-md px-xl py-3 w-full transition-all text-[14px]",
+                "flex items-center gap-2.5 px-3 py-2 w-full rounded-sm transition-all text-[13px] font-medium text-left",
                 isActive 
-                  ? "text-primary font-bold bg-secondary/5 border-r-[2px] border-primary"
-                  : "text-on-surface-variant hover:text-primary hover:bg-surface-container-low border-r-[2px] border-transparent"
+                  ? "text-primary bg-surface-container/85 font-semibold"
+                  : "text-on-surface-variant hover:text-primary hover:bg-surface-container/40"
               )}
             >
-              <Icon className="w-5 h-5" />
+              <Icon className="w-4 h-4 shrink-0" />
               <span>{label}</span>
             </button>
           );
         })}
       </div>
       
-      <div className="mt-auto flex flex-col gap-xs pt-md border-t border-outline-variant/30 pb-xl">
-        <button className="flex items-center gap-md text-on-surface-variant hover:text-primary px-xl py-sm transition-all text-[14px]">
-          <HelpCircle className="w-5 h-5" />
+      <div className="mt-auto flex flex-col gap-0.5 px-3 pb-6">
+        <button className="flex items-center gap-2.5 text-on-surface-variant hover:text-primary px-3 py-2 transition-all text-[12px] font-medium rounded-sm hover:bg-surface-container/40 text-left">
+          <HelpCircle className="w-4 h-4 shrink-0" />
           <span>帮助</span>
         </button>
-        <button className="flex items-center gap-md text-on-surface-variant hover:text-primary px-xl py-sm transition-all text-[14px]">
-          <Headset className="w-5 h-5" />
+        <button className="flex items-center gap-2.5 text-on-surface-variant hover:text-primary px-3 py-2 transition-all text-[12px] font-medium rounded-sm hover:bg-surface-container/40 text-left">
+          <Headset className="w-4 h-4 shrink-0" />
           <span>支持</span>
         </button>
       </div>

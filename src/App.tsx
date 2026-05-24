@@ -11,7 +11,10 @@ import { KnowledgeBase } from './views/KnowledgeBase';
 import { Drafts } from './views/Drafts';
 import { Projects } from './views/Projects';
 import { AutoLearning } from './views/AutoLearning';
+import { Marketplace } from './views/Marketplace';
 import { ViewState } from './types';
+import { EnterpriseProvider } from './context/EnterpriseContext';
+import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<ViewState>('dashboard');
@@ -30,14 +33,31 @@ export default function App() {
         return <Projects />;
       case 'learning':
         return <AutoLearning />;
+      case 'marketplace':
+        return <Marketplace />;
       default:
         return <Dashboard />;
     }
   };
 
   return (
-    <Layout currentView={currentView} onViewChange={setCurrentView}>
-      {renderView()}
-    </Layout>
+    <EnterpriseProvider>
+      <Layout currentView={currentView} onViewChange={setCurrentView}>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={currentView}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            className="w-full h-full"
+          >
+            {renderView()}
+          </motion.div>
+        </AnimatePresence>
+      </Layout>
+    </EnterpriseProvider>
   );
 }
+
+

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Compass, GraduationCap, FileText, PlusCircle, Mic, ChevronDown, ArrowUp, Brain } from 'lucide-react';
+import { Compass, GraduationCap, FileText, Plus, SlidersHorizontal, Mic, ChevronDown, ArrowUp, Brain } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { motion, AnimatePresence } from 'motion/react';
 
 export function AgentStudio() {
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
@@ -8,14 +9,16 @@ export function AgentStudio() {
   const models = ["鲸杉GEO-Agent 1.8", "DeepSeek-V3", "Llama-3"];
 
   return (
-    <div className="flex flex-col h-[calc(100vh-64px)] relative w-full pt-8 animate-in fade-in zoom-in-95 duration-500">
+    <div className="flex flex-col h-[calc(100vh-64px)] relative w-full pt-8 overflow-hidden">
       
       {/* Scrollable Chat Area */}
-      <div className="flex-1 overflow-y-auto px-xl pb-[140px] z-10 scroll-smooth">
+      <div className="flex-1 overflow-y-auto px-4 sm:px-6 md:px-8 lg:px-xl pb-[140px] z-10 scroll-smooth">
         
         {/* Intro */}
         <div className="flex flex-col items-center justify-center mb-12 mt-8">
-          <h1 className="text-[40px] font-extrabold text-primary tracking-tight whitespace-nowrap">鲸杉GEO-Agent</h1>
+          <h1 className="text-[32px] font-bold text-primary font-heading leading-tight tracking-tight">
+            鲸杉GEO-Agent
+          </h1>
           
           {/* Quick Actions */}
           <div className="flex flex-wrap justify-center gap-4 mt-12 max-w-3xl">
@@ -29,34 +32,33 @@ export function AgentStudio() {
         <div className="flex flex-col gap-8 max-w-4xl mx-auto w-full">
           {/* User Message */}
           <div className="flex justify-end w-full">
-            <div className="bg-primary text-on-primary text-[14px] rounded-2xl rounded-tr-sm px-5 py-3 max-w-[75%] shadow-sm">
+            <div className="bg-surface-container-high text-on-surface text-[14px] rounded-2xl rounded-tr-sm px-5 py-3 max-w-[75%] ">
               我想对我的本地品牌『成都行乐音改』进行GEO生成式引擎优化，目前我们在豆包和DeepSeek里几乎搜索不到，应该怎么开始？
             </div>
           </div>
 
           {/* Agent Reply */}
-          <div className="flex justify-start w-full relative pl-8">
-            <div className="absolute left-0 top-0 w-4 h-4 rounded-full bg-secondary shadow-[0_0_8px_rgba(113,42,226,0.6)]" />
+          <div className="flex justify-start w-full">
             
             <div className="flex flex-col gap-3 max-w-[85%]">
               
               {/* Reasoning Block */}
-              <div className="backdrop-blur-md bg-surface-container-lowest/80 border border-outline-variant/30 rounded-xl px-4 py-2 inline-flex items-center gap-4 self-start cursor-pointer hover:bg-surface-container-lowest shadow-sm transition-all">
+              <div className="backdrop-blur-md bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl px-4 py-2 inline-flex items-center gap-4 self-start cursor-pointer hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45 transition-all">
                 <div className="flex items-center gap-2 text-secondary">
                   <Brain className="w-4 h-4" />
                   <span className="text-[11px] font-bold uppercase tracking-wider">意图识别: geo_optimization • 已匹配 RAG 引擎</span>
                 </div>
-                <span className="font-mono text-[13px] text-on-surface-variant border-l border-outline-variant/30 pl-4">0.85s</span>
+                <span className="font-mono text-[13px] text-on-surface-variant border-l border-outline-variant/60 pl-4">0.85s</span>
                 <ChevronDown className="w-4 h-4 text-on-surface-variant" />
               </div>
 
               {/* Message Bubble */}
-              <div className="backdrop-blur-md bg-surface/90 text-on-surface text-[14px] border border-outline-variant/30 rounded-2xl rounded-tl-sm p-5 shadow-sm">
+              <div className="backdrop-blur-md bg-[#f7f7f5] dark:bg-surface-variant/45 text-on-surface text-[14px] border-transparent bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl rounded-tl-sm p-6 leading-relaxed">
                 <p className="mb-4 text-[15px] leading-relaxed">
-                  您好！我已经为您加载了 **鲸杉GEO-Agent** 本地服务优化流。我们将通过 **RAG管线 & state-machine 驱动的 7 阶段 GEO 优化流程** 全面重组您品牌在两大主流模型中的推荐和召回权重。
+                  您好！我已经为您加载了 **鲸杉GEO-Agent** 本地服务优化流。我们将通过 **RAG管线 & state-machine 驱动的 7 阶段 GEO 优化流程** 全面重组您品牌在两大主流模型中的推荐 and 召回权重。
                 </p>
                 
-                <p className="mb-4 text-[15px] leading-relaxed">
+                <p className="mb-4 text-[13px] leading-relaxed">
                   <strong>当前就绪的项目执行路径规划如下：</strong>
                 </p>
 
@@ -68,11 +70,11 @@ export function AgentStudio() {
 
                 {/* Data Bento inside chat */}
                 <div className="grid grid-cols-2 gap-4 mt-4">
-                  <div className="bg-surface-container-lowest border border-outline-variant/20 rounded-xl p-4">
+                  <div className="bg-[#f7f7f5] dark:bg-surface-variant/45 border border-outline-variant/20 rounded-2xl p-4">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block mb-2">知识库就绪状态</span>
                     <span className="font-mono text-[13px] text-secondary font-semibold tracking-tight">已导入 3 大源文件 • EEAT 锚点就绪</span>
                   </div>
-                  <div className="bg-surface-container-lowest border border-outline-variant/20 rounded-xl p-4">
+                  <div className="bg-[#f7f7f5] dark:bg-surface-variant/45 border border-outline-variant/20 rounded-2xl p-4">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block mb-2">候选关键词探测线</span>
                     <span className="font-mono text-[13px] text-emerald-600 font-semibold tracking-tight">行乐音改汽车音响、成都专业隔音降噪</span>
                   </div>
@@ -85,58 +87,102 @@ export function AgentStudio() {
 
       {/* Input Area */}
       <div className="absolute bottom-0 left-0 w-full p-lg bg-gradient-to-t from-background via-background to-transparent z-20 pb-8">
-        <div className="max-w-4xl mx-auto relative">
-          <div className="backdrop-blur-xl bg-surface/90 border border-outline-variant/40 shadow-xl p-2 flex items-end gap-3 transition-all rounded-2xl focus-within:ring-2 focus-within:ring-secondary/20">
-            <div className="flex items-center gap-2 pl-2 pb-2 shrink-0">
-              <button className="w-8 h-8 flex items-center justify-center text-on-surface-variant hover:text-secondary transition-colors">
-                <PlusCircle className="w-6 h-6" />
-              </button>
-              <button className="w-8 h-8 flex items-center justify-center text-on-surface-variant hover:text-secondary transition-colors">
-                <Mic className="w-6 h-6" />
-              </button>
-            </div>
-            
+        <div className="max-w-4xl mx-auto relative2">
+          <div className="backdrop-blur-xl bg-[#f7f7f5] dark:bg-surface-variant/45  hover: focus-within: p-4 pb-3 flex flex-col transition-all rounded-2xl">
+            {/* Top row: Text area for premium layout */}
             <textarea 
-              className="flex-1 bg-transparent border-none outline-none resize-none text-[15px] text-on-surface placeholder:text-on-surface-variant/50 py-3 max-h-[120px] focus:ring-0 leading-relaxed" 
-              placeholder="指示 鲸杉GEO-Agent..." 
-              rows={1}
+              className="w-full bg-transparent border-none outline-none resize-none text-[15px] text-on-surface placeholder:text-on-surface-variant/40 px-2 py-1 min-h-[50px] max-h-[160px] focus:ring-0 leading-relaxed" 
+              placeholder="Do anything with AI..." 
+              rows={2}
             />
             
-            <div className="flex items-center gap-3 pr-1 pb-1 shrink-0">
-              <div className="relative">
-                <button 
-                  onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
-                  className="flex items-center gap-2 bg-transparent px-3 py-2 rounded-xl hover:bg-surface-container-low transition-colors cursor-pointer font-mono text-[11px] text-on-surface-variant hover:text-primary uppercase tracking-wider font-bold"
+            {/* Bottom row: Operational Bar */}
+            <div className="flex items-center justify-between mt-3 pt-1 border-t border-outline-variant/5">
+              {/* Left group: Add and Settings Sliders */}
+              <div className="flex items-center gap-1">
+                <motion.button 
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant/70 hover:text-primary hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45 transition-colors" 
+                  title="添加/附件"
                 >
-                  {selectedModel}
-                  <ChevronDown className={cn("w-4 h-4 text-on-surface-variant/60 transition-transform", isModelDropdownOpen && "rotate-180")} />
-                </button>
-                
-                {isModelDropdownOpen && (
-                  <div className="absolute bottom-full right-0 mb-2 w-48 bg-surface-container-lowest border border-outline-variant/30 rounded-xl shadow-lg overflow-hidden flex flex-col py-1 animate-in fade-in zoom-in-95 duration-200">
-                    {models.map(model => (
-                      <button
-                        key={model}
-                        onClick={() => {
-                          setSelectedModel(model);
-                          setIsModelDropdownOpen(false);
-                        }}
-                        className={cn(
-                          "px-4 py-2.5 text-left font-mono text-[11px] uppercase tracking-wider transition-colors",
-                          selectedModel === model 
-                            ? "bg-secondary/10 text-secondary font-bold" 
-                            : "text-on-surface hover:bg-surface-container-low hover:text-primary font-medium"
-                        )}
-                      >
-                        {model}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                  <Plus className="w-5 h-5" />
+                </motion.button>
+                <motion.button 
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant/70 hover:text-primary hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45 transition-colors" 
+                  title="配置选项"
+                >
+                  <SlidersHorizontal className="w-4 h-4" />
+                </motion.button>
               </div>
-              <button className="w-10 h-10 rounded-xl bg-secondary text-white flex items-center justify-center hover:brightness-110 shadow-md shadow-secondary/30 transition-all">
-                <ArrowUp className="w-5 h-5" />
-              </button>
+              
+              {/* Right group: Model select dropdown, microphone, and submit button */}
+              <div className="flex items-center gap-2.5">
+                {/* Model dropdown */}
+                <div className="relative">
+                  <motion.button 
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
+                    className="flex items-center gap-1.5 bg-transparent px-3 py-1.5 rounded-2xl hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45 transition-colors cursor-pointer font-sans text-[12px] text-on-surface-variant/75 hover:text-primary font-medium"
+                  >
+                    {selectedModel === "鲸杉GEO-Agent 1.8" ? "Auto" : selectedModel}
+                    <ChevronDown className={cn("w-3.5 h-3.5 text-on-surface-variant/50 transition-transform", isModelDropdownOpen && "rotate-180")} />
+                  </motion.button>
+                  
+                  <AnimatePresence>
+                    {isModelDropdownOpen && (
+                      <motion.div 
+                        initial={{ opacity: 0, scale: 0.95, y: -5 }}
+                        animate={{ opacity: 1, scale: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95, y: -5 }}
+                        transition={{ duration: 0.12 }}
+                        className="absolute bottom-full right-0 mb-2 w-48 bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl  overflow-hidden flex flex-col py-1.5 z-50"
+                      >
+                        {models.map(model => (
+                          <button
+                            key={model}
+                            onClick={() => {
+                              setSelectedModel(model);
+                              setIsModelDropdownOpen(false);
+                            }}
+                            className={cn(
+                              "px-4 py-2 text-left font-mono text-[11px] uppercase tracking-wider transition-colors",
+                              selectedModel === model 
+                                ? "bg-secondary/10 text-secondary font-bold" 
+                                : "text-on-surface hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45 hover:text-primary font-medium"
+                            )}
+                          >
+                            {model}
+                          </button>
+                        ))}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                {/* Microphone / Voice button */}
+                <motion.button 
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant/70 hover:text-primary hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45 transition-colors" 
+                  title="语音输入"
+                >
+                  <Mic className="w-4 h-4" />
+                </motion.button>
+
+                {/* Circular Send Arrow button */}
+                <motion.button 
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="w-8 h-8 rounded-full bg-surface-container-high/60 text-on-surface-variant hover:text-primary hover:bg-surface-container-high flex items-center justify-center transition-all" 
+                  title="发送"
+                >
+                  <ArrowUp className="w-4 h-4" />
+                </motion.button>
+              </div>
             </div>
           </div>
           
@@ -153,9 +199,13 @@ export function AgentStudio() {
 
 function QuickAction({ icon: Icon, text }: { icon: any, text: string }) {
   return (
-    <button className="backdrop-blur-md bg-surface-container-lowest/70 border border-outline-variant/30 rounded-xl px-5 py-3 shadow-sm hover:border-secondary hover:shadow-md transition-all text-[14px] text-on-surface flex items-center gap-3">
+    <motion.button 
+      whileHover={{ y: -2, scale: 1.02 }}
+      whileTap={{ scale: 0.98 }}
+      className="backdrop-blur-md bg-[#f7f7f5] dark:bg-surface-variant/70 border-transparent bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl px-5 py-3  hover:border-secondary hover: transition-all text-[14px] text-on-surface flex items-center gap-3 cursor-pointer"
+    >
       <Icon className="text-secondary w-5 h-5" />
       {text}
-    </button>
+    </motion.button>
   );
 }

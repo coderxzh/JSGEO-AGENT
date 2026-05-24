@@ -6,7 +6,8 @@ export type ViewState =
   | 'knowledge' 
   | 'drafts' 
   | 'projects' 
-  | 'learning';
+  | 'learning'
+  | 'marketplace';
 
 export interface LayoutProps {
   currentView: ViewState;

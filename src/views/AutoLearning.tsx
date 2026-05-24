@@ -4,12 +4,12 @@ import { cn } from '../lib/utils';
 
 export function AutoLearning() {
   return (
-    <div className="p-xl max-w-[1440px] mx-auto w-full grid grid-cols-1 xl:grid-cols-12 gap-gutter animate-in fade-in duration-500 min-h-full">
+    <div className="p-4 sm:p-6 md:p-8 lg:p-xl max-w-[1440px] mx-auto w-full grid grid-cols-1 xl:grid-cols-12 gap-gutter animate-in fade-in duration-500 min-h-full">
       
       {/* Task Grid */}
       <div className="xl:col-span-7 flex flex-col gap-6">
         <div>
-          <h2 className="text-[32px] font-bold text-primary tracking-tight">自动反思与进化中心</h2>
+          <h2 className="text-[32px] font-bold text-primary font-heading tracking-tight">自动反思与进化中心</h2>
           <p className="text-[14px] text-on-surface-variant mt-2">
             鲸杉GEO-Agent 会定时自动化模拟提问、巡检收录结果。自动归纳成功因子重写大模型系统指令集。
           </p>
@@ -43,27 +43,27 @@ export function AutoLearning() {
 
       {/* Evolutionary Rules and ELO Panel */}
       <div className="xl:col-span-5 flex flex-col gap-6">
-        <div className="bg-surface-container-lowest border border-outline-variant/30 rounded-xl p-6 shadow-sm flex flex-col gap-6">
+        <div className="bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl p-6  flex flex-col gap-6">
           <div className="flex items-center gap-3 border-b border-outline-variant/20 pb-4">
             <Sparkles className="w-5 h-5 text-secondary" />
             <h3 className="text-[18px] font-bold text-on-surface">已进化白盒规则库</h3>
           </div>
           
           <div className="space-y-4">
-            <div className="p-4 rounded-xl bg-surface border border-outline-variant/30">
+            <div className="p-4 rounded-2xl bg-surface border-transparent bg-[#f7f7f5] dark:bg-surface-variant/45">
               <div className="flex justify-between items-center mb-2">
-                <span className="font-mono text-[12px] font-bold text-primary uppercase">doubao.md (v3.2) 规则更新</span>
-                <span className="text-[10px] text-secondary bg-secondary/10 px-2 py-0.5 rounded font-mono font-bold">置信度: 95%</span>
+                <span className="font-mono text-[12px] font-bold text-primary font-heading uppercase">doubao.md (v3.2) 规则更新</span>
+                <span className="text-[10px] text-secondary bg-secondary/10 px-2 py-0.5 rounded-2xl font-mono font-bold">置信度: 95%</span>
               </div>
               <p className="text-[13px] text-on-surface-variant leading-relaxed mb-2">
                 <strong>[最新沉淀]</strong> 豆包检索偏好客观数字盘点型主标题（例如“2026成都靠谱汽车音响推荐”），详情页内嵌 Markdown 详细对比参数表格具有 <strong>+40%</strong> 额外引用加权。
               </p>
             </div>
 
-            <div className="p-4 rounded-xl bg-surface border border-outline-variant/30">
+            <div className="p-4 rounded-2xl bg-surface border-transparent bg-[#f7f7f5] dark:bg-surface-variant/45">
               <div className="flex justify-between items-center mb-2">
-                <span className="font-mono text-[12px] font-bold text-primary uppercase">deepseek.md (v2.8) 规则更新</span>
-                <span className="text-[10px] text-secondary bg-secondary/10 px-2 py-0.5 rounded font-mono font-bold">置信度: 92%</span>
+                <span className="font-mono text-[12px] font-bold text-primary font-heading uppercase">deepseek.md (v2.8) 规则更新</span>
+                <span className="text-[10px] text-secondary bg-secondary/10 px-2 py-0.5 rounded-2xl font-mono font-bold">置信度: 92%</span>
               </div>
               <p className="text-[13px] text-on-surface-variant leading-relaxed">
                 <strong>[最新沉淀]</strong> DeepSeek 极度考量硬核品牌直达与 EEAT 精准资质。标题中『代理』『资质证书』等词前置有助提高抓取排名率。
@@ -91,7 +91,7 @@ export function AutoLearning() {
 function TaskCard({ title, status, active, desc, progress, cpu, memory, color, inactive }: any) {
   return (
     <div className={cn(
-      "bg-surface-container-lowest border border-outline-variant/30 rounded-xl p-5 shadow-sm flex flex-col gap-4 relative overflow-hidden group hover:shadow-md transition-all",
+      "bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl p-5  flex flex-col gap-4 relative overflow-hidden group hover: transition-all",
       inactive && "opacity-75"
     )}>
       <div className="flex justify-between items-start">
@@ -104,7 +104,7 @@ function TaskCard({ title, status, active, desc, progress, cpu, memory, color, i
           </div>
           <h3 className="text-[18px] font-bold text-on-surface">{title}</h3>
         </div>
-        <button className="text-on-surface-variant hover:text-primary p-2 -mr-2 -mt-2 rounded-md hover:bg-surface-container-low">
+        <button className="text-on-surface-variant hover:text-primary p-2 -mr-2 -mt-2 rounded-md hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45">
           <MoreVertical className="w-5 h-5" />
         </button>
       </div>
@@ -132,10 +132,10 @@ function TaskCard({ title, status, active, desc, progress, cpu, memory, color, i
 
 function EloRow({ name, score, tag, color }: any) {
   return (
-    <div className="flex justify-between items-center p-3.5 bg-surface rounded-lg border border-outline-variant/30">
+    <div className="flex justify-between items-center p-3.5 bg-surface rounded-sm border-transparent bg-[#f7f7f5] dark:bg-surface-variant/45">
       <div className="flex flex-col gap-1">
         <span className="font-sans text-[13px] font-semibold text-primary">{name}</span>
-        <span className={cn("text-[10px] font-bold uppercase py-0.5 px-2 rounded self-start border border-black/5 leading-none", color)}>
+        <span className={cn("text-[10px] font-bold uppercase py-0.5 px-2 rounded-2xl self-start border border-black/5 leading-none", color)}>
           {tag}
         </span>
       </div>
