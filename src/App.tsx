@@ -11,7 +11,7 @@ import { KnowledgeBase } from './views/KnowledgeBase';
 import { Drafts } from './views/Drafts';
 import { Projects } from './views/Projects';
 import { AutoLearning } from './views/AutoLearning';
-import { Marketplace } from './views/Marketplace';
+import { WebBuilder } from './views/WebBuilder';
 import { ViewState } from './types';
 import { EnterpriseProvider } from './context/EnterpriseContext';
 import { motion, AnimatePresence } from 'motion/react';
@@ -34,7 +34,7 @@ export default function App() {
       case 'learning':
         return <AutoLearning />;
       case 'marketplace':
-        return <Marketplace />;
+        return <WebBuilder />;
       default:
         return <Dashboard />;
     }

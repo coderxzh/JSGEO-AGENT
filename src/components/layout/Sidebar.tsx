@@ -11,7 +11,7 @@ import {
   HelpCircle,
   Headset,
   ChevronLeft,
-  Compass
+  Globe
 } from 'lucide-react';
 
 interface SidebarProps {
@@ -28,7 +28,7 @@ const navItems = [
   { id: 'drafts', label: '稿件管理', icon: FileText },
   { id: 'projects', label: '项目管理', icon: FolderOpen },
   { id: 'learning', label: '自动学习', icon: GraduationCap },
-  { id: 'marketplace', label: '模板与插件', icon: Compass },
+  { id: 'marketplace', label: 'AI网页构建', icon: Globe },
 ] as const;
 
 export function Sidebar({ currentView, onViewChange, isCollapsed, onCollapseToggle }: SidebarProps) {

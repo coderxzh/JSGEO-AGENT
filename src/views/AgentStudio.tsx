@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Compass, GraduationCap, FileText, Plus, SlidersHorizontal, Mic, ChevronDown, ArrowUp, Brain } from 'lucide-react';
+import { Compass, GraduationCap, FileText, Plus, SlidersHorizontal, Mic, ChevronDown, ArrowUp, Brain, Globe } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -23,6 +23,7 @@ export function AgentStudio() {
           {/* Quick Actions */}
           <div className="flex flex-wrap justify-center gap-4 mt-12 max-w-3xl">
             <QuickAction icon={Compass} text="📥 补全成都行乐音改资质 (EEAT基建码)" />
+            <QuickAction icon={Globe} text="✨ 一键生成智能托管官网 (AI Web Builder)" />
             <QuickAction icon={GraduationCap} text="🔍 启动豆包/DeepSeek现状并查体检" />
             <QuickAction icon={FileText} text="✍️ 创制温饱/发烧阶梯式内容矩阵" />
           </div>
