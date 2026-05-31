@@ -1,212 +1,3314 @@
-import React, { useState } from 'react';
-import { Compass, GraduationCap, FileText, Plus, SlidersHorizontal, Mic, ChevronDown, ArrowUp, Brain, Globe } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ArrowUp,
+  Brain,
+  Check,
+  ChevronDown,
+  Compass,
+  Database,
+  FileText,
+  Globe,
+  GraduationCap,
+  Info,
+  Library,
+  Mic,
+  Plus,
+  Search,
+  SlidersHorizontal,
+  Sparkles,
+  Target,
+  X,
+} from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
+import {
+  Confirmation,
+  ConfirmationAction,
+  ConfirmationActions,
+  ConfirmationRequest,
+  ConfirmationTitle,
+} from '../components/ai-elements/confirmation';
+import {
+  ChainOfThought,
+  ChainOfThoughtContent,
+  ChainOfThoughtHeader,
+  ChainOfThoughtSearchResult,
+  ChainOfThoughtSearchResults,
+  ChainOfThoughtStep,
+} from '../components/ai-elements/chain-of-thought';
+import {
+  Conversation,
+  ConversationContent,
+  ConversationScrollButton,
+} from '../components/ai-elements/conversation';
+import {
+  Message,
+  MessageActions,
+  MessageContent,
+  MessageResponse,
+} from '../components/ai-elements/message';
+import {
+  PromptInput,
+  PromptInputButton,
+  PromptInputFooter,
+  usePromptInputAttachments,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputTools,
+} from '../components/ai-elements/prompt-input';
+import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from '../components/ai-elements/reasoning';
+import {
+  Task,
+  TaskContent,
+  TaskItem,
+  TaskTrigger,
+} from '../components/ai-elements/task';
+import {
+  Source,
+  Sources,
+  SourcesContent,
+  SourcesTrigger,
+} from '../components/ai-elements/sources';
+import { Suggestion, Suggestions } from '../components/ai-elements/suggestion';
 import { cn } from '../lib/utils';
-import { motion, AnimatePresence } from 'motion/react';
+import { TooltipProvider } from '../../components/ui/tooltip';
+import { useEnterprise } from '../context/EnterpriseContext';
+
+type SourceCitation = GeoAgentSourceCitation;
+type SearchAction = GeoAgentSearchAction;
+type SearchContext = GeoAgentSearchContext;
+type SearchUsage = GeoAgentSearchUsage;
+type PromptAttachment = {
+  filename?: string;
+  mediaType?: string;
+  url?: string;
+  type?: string;
+};
+
+type ChatMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  reasoning?: string;
+  reasoningContent?: string;
+  sources?: SourceCitation[];
+  searchQueries?: string[];
+  searchActions?: SearchAction[];
+  searchUsage?: SearchUsage;
+  liveSearchSteps?: Array<{ query: string; status: 'in_progress' | 'completed' }>;
+  knowledgeDraft?: GeoAgentKnowledgeDraft;
+  phaseTwoPrompt?: GeoAgentGeoProject;
+  phaseTwoPlatform?: 'doubao' | 'deepseek';
+  phaseTwoExecution?: {
+    platform: 'doubao' | 'deepseek';
+    companyName: string;
+    activeStep: number;
+  };
+  geoReport?: GeoAgentGeoReport;
+  sourceDiscoveryExecution?: {
+    platform: 'doubao' | 'deepseek';
+    activeStep: number;
+  };
+  sourceDiscovery?: GeoAgentGeoSourceDiscovery;
+  sourceDiscoveryAttempted?: boolean;
+  articleDraftExecution?: {
+    platform: 'doubao' | 'deepseek';
+    articleType?: 'consulting' | 'review';
+    activeStep: number;
+  };
+  articleDraft?: GeoAgentGeoArticleDraft;
+  supportArticles?: GeoAgentGeoSupportArticleRunResponse;
+  supportArticlesPrompt?: GeoAgentGeoSourceDiscovery;
+  articleDraftAttempts?: Partial<Record<'consulting' | 'review', boolean>>;
+  confirmationState?: 'approval-requested' | 'approval-responded' | 'output-available';
+  confirmationApproved?: boolean;
+  status?: 'streaming' | 'complete' | 'error';
+  provider?: string;
+  model?: string;
+  error?: string | null;
+  actionBusy?: boolean;
+};
+
+type ModelCapability = {
+  label: string;
+  shortLabel: string;
+  providerKey: 'doubao' | 'deepseek';
+  supportsDeepThinking: boolean;
+  supportsWebSearch: boolean;
+  defaultDeepThinking: boolean;
+  defaultWebSearch: boolean;
+};
+
+const MODEL_CAPABILITIES: ModelCapability[] = [
+  {
+    label: '豆包 Seed 深度搜索',
+    shortLabel: '豆包',
+    providerKey: 'doubao',
+    supportsDeepThinking: true,
+    supportsWebSearch: true,
+    defaultDeepThinking: true,
+    defaultWebSearch: true,
+  },
+  {
+    label: 'DeepSeek-V4 深度思考',
+    shortLabel: 'DeepSeek',
+    providerKey: 'deepseek',
+    supportsDeepThinking: true,
+    supportsWebSearch: false,
+    defaultDeepThinking: true,
+    defaultWebSearch: false,
+  },
+];
+
+type ConfigStatus = Awaited<ReturnType<NonNullable<Window['geoAgent']>['getConfigStatus']>>;
+
+const DEFAULT_INPUT_PLACEHOLDER = '输入 GEO 任务，例如：为成都行乐音改建立企业知识库...';
+const CURRENT_CONVERSATION_STORAGE_PREFIX = 'geo-agent-current-conversation-id';
+const PHASE_TWO_PROMPT_STORAGE_KEY = 'geo-agent-phase-two-prompts-v2';
+const CONVERSATION_HISTORY_RESET_KEY = 'geo-agent-conversation-history-reset-v2';
+const KNOWLEDGE_DRAFT_MESSAGE_MARKER = '__GEO_KNOWLEDGE_DRAFT__';
+const KNOWLEDGE_ATTACHMENT_ACCEPT = [
+  '.md',
+  '.markdown',
+  '.txt',
+  '.pdf',
+  '.doc',
+  '.docx',
+  'text/markdown',
+  'text/plain',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+].join(',');
+const DRAFT_PROFILE_NAME = '企业知识库草稿';
+const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+const PROFILE_SUMMARY_FIELDS: Array<[keyof GeoAgentEnterpriseProfile, string]> = [
+  ['company_name', '公司名称'],
+  ['short_name', '公司简称'],
+  ['industry', '所属行业'],
+  ['main_business', '主营业务'],
+  ['official_website', '官方网站'],
+  ['official_media', '官方自媒体'],
+  ['detailed_intro', '企业详细介绍'],
+  ['brand_story', '品牌故事'],
+  ['products_services', '产品/服务介绍'],
+  ['product_features', '产品/服务特点'],
+  ['user_pain_points', '用户痛点'],
+  ['trust_endorsements', '信任背书'],
+  ['brand_authorization_pricing', '品牌授权与客单价'],
+  ['cases', '行业/客户案例'],
+  ['business_regions', '业务区域范围'],
+  ['customer_service_phone', '客服办公电话'],
+  ['current_pain_points', '目前痛点/现状'],
+  ['core_advantages', '核心优势与特色'],
+  ['extra_info', '其他信息补充'],
+  ['image_notes', '图片内容'],
+  ['target_keywords', '目标关键词'],
+];
+const PLACEHOLDER_PROFILE_VALUES = new Set(['', '待补充', '未填', '未填写', DRAFT_PROFILE_NAME]);
+
+function phaseTwoPromptKey(projectId: string, conversationId: string | null, platform: 'doubao' | 'deepseek') {
+  return `${projectId}:${conversationId || 'new'}:${platform}`;
+}
+
+function conversationStorageKey(projectId?: string | null) {
+  return `${CURRENT_CONVERSATION_STORAGE_PREFIX}:${projectId || 'global'}`;
+}
+
+function clearConversationStorageById(conversationId: string) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index);
+    if (!key?.startsWith(`${CURRENT_CONVERSATION_STORAGE_PREFIX}:`)) {
+      continue;
+    }
+    if (localStorage.getItem(key) === conversationId) {
+      localStorage.removeItem(key);
+    }
+  }
+}
+
+function clearConversationStorage() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index);
+    if (key?.startsWith(`${CURRENT_CONVERSATION_STORAGE_PREFIX}:`) || key === PHASE_TWO_PROMPT_STORAGE_KEY) {
+      localStorage.removeItem(key);
+    }
+  }
+}
+
+function readPhaseTwoPromptKeys(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(PHASE_TWO_PROMPT_STORAGE_KEY) || '[]');
+  } catch {
+    return [];
+  }
+}
+
+function rememberPhaseTwoPromptKey(key: string) {
+  const keys = new Set(readPhaseTwoPromptKeys());
+  keys.add(key);
+  localStorage.setItem(PHASE_TWO_PROMPT_STORAGE_KEY, JSON.stringify(Array.from(keys).slice(-100)));
+}
+
+const DRAFT_PREVIEW_GROUPS: Array<{
+  title: string;
+  fields: Array<[keyof GeoAgentEnterpriseProfileInput, string]>;
+}> = [
+  {
+    title: '基础信息',
+    fields: [
+      ['company_name', '公司名称'],
+      ['short_name', '公司简称'],
+      ['industry', '所属行业'],
+      ['main_business', '主营业务'],
+      ['official_website', '官方网站'],
+      ['official_media', '官方自媒体'],
+    ],
+  },
+  {
+    title: '企业介绍',
+    fields: [
+      ['detailed_intro', '企业详细介绍'],
+      ['brand_story', '品牌故事'],
+      ['current_pain_points', '目前痛点/现状'],
+      ['core_advantages', '核心优势与特色'],
+    ],
+  },
+  {
+    title: '产品服务',
+    fields: [
+      ['products_services', '产品/服务介绍'],
+      ['product_features', '产品/服务特点'],
+      ['brand_authorization_pricing', '品牌授权与客单价'],
+    ],
+  },
+  {
+    title: '用户与背书',
+    fields: [
+      ['user_pain_points', '用户痛点'],
+      ['trust_endorsements', '信任背书'],
+      ['cases', '行业/客户案例'],
+      ['business_regions', '业务区域范围'],
+      ['customer_service_phone', '客服办公电话'],
+    ],
+  },
+  {
+    title: '补充与关键词',
+    fields: [
+      ['extra_info', '其他信息补充'],
+      ['image_notes', '图片内容'],
+      ['target_keywords', '目标关键词'],
+    ],
+  },
+];
+
+function getSkillPlaceholder(skill: GeoAgentSkill | null) {
+  if (!skill) {
+    return DEFAULT_INPUT_PLACEHOLDER;
+  }
+  if (skill.id === 'knowledge-base-ingest' || skill.name.includes('知识库')) {
+    return '请上传或粘贴企业资料：公司介绍、产品服务、用户痛点、信任背书、案例、业务区域、目标关键词...';
+  }
+  return `描述你想让「${skill.name}」帮你完成的任务，或直接发送开始。`;
+}
+
+function updateMessage(
+  messages: ChatMessage[],
+  id: string,
+  patch: Partial<ChatMessage> | ((message: ChatMessage) => ChatMessage)
+) {
+  return messages.map((message) => {
+    if (message.id !== id) {
+      return message;
+    }
+    return typeof patch === 'function' ? patch(message) : { ...message, ...patch };
+  });
+}
+
+function upsertMessage(messages: ChatMessage[], message: ChatMessage) {
+  const existing = messages.some((item) => item.id === message.id);
+  return existing ? updateMessage(messages, message.id, message) : [...messages, message];
+}
+
+function replaceMessageId(messages: ChatMessage[], previousId: string, nextMessage: ChatMessage) {
+  const withoutNext = messages.filter((item) => item.id !== nextMessage.id);
+  const replaced = withoutNext.map((item) => item.id === previousId ? nextMessage : item);
+  return replaced.some((item) => item.id === nextMessage.id) ? replaced : [...replaced, nextMessage];
+}
+
+function appendMessageText(
+  messages: ChatMessage[],
+  id: string,
+  text: string,
+  field: 'content' | 'reasoningContent' = 'content'
+) {
+  return updateMessage(messages, id, (message) => ({
+    ...message,
+    [field]: `${message[field] ?? ''}${text}`,
+    status: 'streaming',
+  }));
+}
+
+function buildAssistantReasoning(
+  provider?: string,
+  model?: string,
+  options?: { deepThinking?: boolean; webSearch?: boolean; dispatcher?: boolean; error?: boolean }
+) {
+  if (options?.error) {
+    return `${provider || '模型'} / ${model || 'unknown'} 请求返回错误。请检查 .env、模型名称、base_url 或重启桌面端。`;
+  }
+  if (options?.dispatcher) {
+    return `${provider || 'local'} / ${model || 'dispatcher'} 已完成本地请求。本次由调度模型负责解析与归档。`;
+  }
+  return `${provider || 'local'} / ${model || 'unknown'} 已完成本地请求。深度思考：${options?.deepThinking ? '开启' : '关闭'}；联网搜索：${options?.webSearch ? '开启' : '不可用或关闭'}。`;
+}
+
+function updateSupportArticleDraft(
+  messages: ChatMessage[],
+  id: string,
+  draft: GeoAgentGeoArticleDraft
+) {
+  return updateMessage(messages, id, (message) => {
+    if (!message.supportArticles) {
+      return message;
+    }
+    const key = draft.article_type === 'review' ? 'review_draft' : 'consulting_draft';
+    const nextSupportArticles = {
+      ...message.supportArticles,
+      [key]: draft,
+    };
+    const consultingConfirmed = nextSupportArticles.consulting_draft?.status === 'confirmed';
+    const reviewConfirmed = nextSupportArticles.review_draft?.status === 'confirmed';
+    return {
+      ...message,
+      content: consultingConfirmed && reviewConfirmed
+        ? '阶段四支撑内容已确认完成。\n\n咨询类和测评类草稿都已确认，后续可以进入阶段五排行榜文章生成。'
+        : '草稿已确认。请继续确认另一篇支撑草稿，两个都确认后才能进入阶段五。',
+      supportArticles: nextSupportArticles,
+      status: 'complete',
+    };
+  });
+}
+
+function getNextWorkflowAction(
+  workflowState: GeoAgentWorkflowState | null,
+  message: ChatMessage
+): { type: 'source_discovery' | 'support_articles' | 'stage_five_waiting'; label: string; primaryLabel: string } | null {
+  const platform = getMessagePlatform(message);
+  const platformWorkflow = platform ? workflowState?.platforms[platform] : undefined;
+  const stageThreeStatus = platformWorkflow?.stages.stage_3?.status;
+  const stageFourStatus = platformWorkflow?.stages.stage_4?.status;
+  const stageFiveStatus = platformWorkflow?.stages.stage_5?.status;
+
+  if (
+    message.geoReport?.status === 'completed'
+    && !message.sourceDiscovery
+    && !message.sourceDiscoveryExecution
+    && !message.sourceDiscoveryAttempted
+    && (!stageThreeStatus || stageThreeStatus === 'ready')
+  ) {
+    return {
+      type: 'source_discovery',
+      label: '建议继续执行：阶段三高权重信源发现',
+      primaryLabel: '发现高权重信源',
+    };
+  }
+
+  if (
+    message.sourceDiscovery
+    && message.sourceDiscovery.discovery.status !== 'failed'
+    && !message.articleDraftExecution
+    && !message.supportArticles
+    && !message.supportArticlesPrompt
+    && (!stageFourStatus || stageFourStatus === 'ready')
+  ) {
+    return {
+      type: 'support_articles',
+      label: '建议继续执行：阶段四咨询/测评支撑内容',
+      primaryLabel: '生成阶段四支撑内容',
+    };
+  }
+
+  const consultingConfirmed = message.supportArticles?.consulting_draft?.status === 'confirmed';
+  const reviewConfirmed = message.supportArticles?.review_draft?.status === 'confirmed';
+  if (stageFiveStatus ? stageFiveStatus === 'ready' : consultingConfirmed && reviewConfirmed) {
+    return {
+      type: 'stage_five_waiting',
+      label: '阶段四支撑内容已确认，阶段五排行榜文章模块开放后即可继续。',
+      primaryLabel: '阶段五待开发',
+    };
+  }
+
+  return null;
+}
+
+function getMessagePlatform(message: ChatMessage): 'doubao' | 'deepseek' | null {
+  const platform = message.phaseTwoPlatform
+    ?? (message.geoReport?.platform === 'deepseek' ? 'deepseek' : message.geoReport?.platform === 'doubao' ? 'doubao' : undefined)
+    ?? (message.sourceDiscovery?.platform === 'deepseek' ? 'deepseek' : message.sourceDiscovery?.platform === 'doubao' ? 'doubao' : undefined)
+    ?? (message.supportArticles?.platform === 'deepseek' ? 'deepseek' : message.supportArticles?.platform === 'doubao' ? 'doubao' : undefined);
+  return platform ?? null;
+}
+
+function hasPhaseTwoMessageFor(
+  messages: ChatMessage[],
+  project: GeoAgentGeoProject,
+  platform: 'doubao' | 'deepseek'
+) {
+  return messages.some((message) => {
+    if (getMessagePlatform(message) !== platform) {
+      return false;
+    }
+    return message.phaseTwoPrompt?.id === project.id || message.geoReport?.geo_project_id === project.id;
+  });
+}
+
+function dataUrlToBase64(url: string) {
+  return url.includes(',') ? url.split(',', 2)[1] : url;
+}
+
+async function filePartToKnowledgeAsset(file: PromptAttachment) {
+  if (!file.url) {
+    throw new Error(`${file.filename ?? '附件'} 读取失败，请重新选择文件。`);
+  }
+  const url = file.url.startsWith('blob:')
+    ? await fetch(file.url)
+      .then((response) => response.blob())
+      .then((blob) => new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('文件读取失败。'));
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.readAsDataURL(blob);
+      }))
+    : file.url;
+  return {
+    filename: file.filename || '未命名附件',
+    content_type: file.mediaType || null,
+    content_base64: dataUrlToBase64(url),
+  };
+}
+
+function normalizeChatError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  if (message.includes('No handler registered') && message.includes('create-knowledge-asset')) {
+    return '知识库附件上传接口已更新，请完全关闭并重新启动 Electron 桌面端后再上传附件。';
+  }
+  if (message.includes('No handler registered')) {
+    return '桌面端主进程接口尚未刷新，请完全关闭并重新启动 Electron 后再试。';
+  }
+  return error instanceof Error ? error.message : '本地后端连接失败，请稍后重试。';
+}
+
+function slugifyProjectId(value: string) {
+  const normalized = value
+    .trim()
+    .replace(/[^\u4e00-\u9fa5A-Za-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
+  return normalized || 'enterprise';
+}
+
+function inferKnowledgeIntent(text: string, hasFiles: boolean, isKnowledgeSkill: boolean) {
+  const normalized = text.toLowerCase();
+  const wantsNew = isKnowledgeSkill
+    || /新建|创建|建立|录入|新增|另建|从零/.test(text)
+    || (hasFiles && /知识库|企业资料|公司资料|企业介绍/.test(text));
+  const wantsUpdate = /补充|更新|编辑|修改|追加|完善|修正|加入|写入|保存到/.test(text);
+  if (wantsNew && !wantsUpdate) {
+    return 'create' as const;
+  }
+  if (wantsUpdate) {
+    return 'update' as const;
+  }
+  return hasFiles ? ('create' as const) : ('chat' as const);
+}
+
+function extractCompanyHint(text: string) {
+  const match = text.match(/(?:公司名称|企业名称|品牌名称|公司简称|简称)\s*[：:]\s*([^\n，,。；;]+)/);
+  if (match) {
+    return match[1].trim();
+  }
+  const legalName = text.match(/([\u4e00-\u9fa5A-Za-z0-9（）()·-]{4,40}(?:有限公司|有限责任公司|股份有限公司))/);
+  if (legalName) {
+    return legalName[1].trim();
+  }
+  return '';
+}
+
+function hasProfileValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  const text = String(value).trim();
+  return Boolean(text)
+    && !PLACEHOLDER_PROFILE_VALUES.has(text)
+    && !text.startsWith('这是通过智能助手知识库录入技能自动创建的草稿');
+}
+
+function buildLongTailPreview(profile: GeoAgentEnterpriseProfileInput) {
+  const rawKeywords = String(profile.target_keywords ?? '');
+  const keywords = rawKeywords
+    .split(/[\n,，、;；|]+/)
+    .map((item) => item.trim().replace(/\s+/g, ''))
+    .filter((item) => item && !/(怎么|如何|哪家|为什么|推荐|排行榜|口碑|靠谱|支持|选择)/.test(item))
+    .slice(0, 6);
+  const region = extractPreviewRegion(String(profile.business_regions ?? ''));
+  const rows: string[] = [];
+  keywords.forEach((keyword) => {
+    rows.push(`${keyword}哪家好`, `${keyword}公司推荐`, `${keyword}怎么选`);
+    if (region && !keyword.includes(region)) {
+      rows.push(`${region}${keyword}哪家好`);
+    }
+  });
+  return Array.from(new Set(rows)).slice(0, 12);
+}
+
+function extractPreviewRegion(value: string) {
+  const text = value.replace(/\s+/g, '');
+  return text.match(/[\u4e00-\u9fa5]{2,8}(?:市|区|县|省|自治区)|(?:华东|华南|华中|华北|西南|西北|东北)地区?/)?.[0] ?? '';
+}
+
+function buildKnowledgeSavedSummary(profile: GeoAgentEnterpriseProfile, fileCount: number) {
+  const savedFields = PROFILE_SUMMARY_FIELDS
+    .filter(([field]) => hasProfileValue(profile[field]))
+    .map(([, label]) => label);
+  const missingFields = PROFILE_SUMMARY_FIELDS
+    .filter(([field]) => !hasProfileValue(profile[field]))
+    .map(([, label]) => label);
+  const name = hasProfileValue(profile.company_name) ? profile.company_name : '新的企业知识库';
+  const savedPreview = savedFields.slice(0, 12).join('、') || '附件原文片段';
+  const missingPreview = missingFields.slice(0, 8).join('、');
+
+  return [
+    `已解析 ${fileCount} 个附件，并写入「${name}」企业知识库。`,
+    '',
+    `已录入字段：${savedPreview}${savedFields.length > 12 ? `等 ${savedFields.length} 项` : ''}。`,
+    `当前知识条目：${profile.entry_count} 条，后续 ChatBox、文章生成、网页生成会优先检索这些资料。`,
+    missingFields.length > 0 ? `待补充字段：${missingPreview}${missingFields.length > 8 ? `等 ${missingFields.length} 项` : ''}。` : '这份资料的核心字段已经比较完整，可以继续生成长尾词和内容方案。',
+  ].filter(Boolean).join('\n');
+}
+
+async function ensureDraftEnterpriseProfile(seedText: string) {
+  if (!window.geoAgent?.saveEnterpriseProfile) {
+    throw new Error('当前桌面端尚未暴露企业知识库创建接口，请重启 Electron 后再试。');
+  }
+  const companyHint = extractCompanyHint(seedText);
+  const timestamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14);
+  const projectId = `kb-${slugifyProjectId(companyHint || 'draft')}-${timestamp}`;
+  const displayName = companyHint || DRAFT_PROFILE_NAME;
+  await window.geoAgent.saveEnterpriseProfile({
+    project_id: projectId,
+    company_name: displayName,
+    short_name: displayName,
+    industry: '待补充',
+    main_business: '待补充',
+    detailed_intro: '这是通过智能助手知识库录入技能自动创建的草稿。请继续补充公司名称、主营业务、企业介绍、产品服务、用户痛点、信任背书、案例、业务区域和目标关键词。',
+  });
+  window.dispatchEvent(new CustomEvent('geo-agent-enterprises-refresh'));
+  return projectId;
+}
 
 export function AgentStudio() {
+  const { currentEnterprise, hasEnterprises, isLoadingEnterprises, refreshEnterprises, setEnterpriseId } = useEnterprise();
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
-  const [selectedModel, setSelectedModel] = useState("鲸杉GEO-Agent 1.8");
-  const models = ["鲸杉GEO-Agent 1.8", "DeepSeek-V3", "Llama-3"];
+  const [isOptionsOpen, setIsOptionsOpen] = useState(false);
+  const [isSkillsOpen, setIsSkillsOpen] = useState(false);
+  const [skills, setSkills] = useState<GeoAgentSkill[]>([]);
+  const [selectedSkill, setSelectedSkill] = useState<GeoAgentSkill | null>(null);
+  const [selectedModel, setSelectedModel] = useState(MODEL_CAPABILITIES[0].label);
+  const [deepThinking, setDeepThinking] = useState(true);
+  const [webSearch, setWebSearch] = useState(false);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [inputValue, setInputValue] = useState('');
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
+  const [geoProject, setGeoProject] = useState<GeoAgentGeoProject | null>(null);
+  const [workflowState, setWorkflowState] = useState<GeoAgentWorkflowState | null>(null);
+  const inputShellRef = useRef<HTMLDivElement | null>(null);
+  const openConversationRequestRef = useRef(0);
+  const phaseTwoPromptInFlightRef = useRef<Set<string>>(new Set());
+  const [isConversationHistoryResetting, setIsConversationHistoryResetting] = useState(
+    () => typeof window !== 'undefined' && localStorage.getItem(CONVERSATION_HISTORY_RESET_KEY) !== 'done'
+  );
+
+  const selectedCapability = useMemo(
+    () => MODEL_CAPABILITIES.find((model) => model.label === selectedModel) ?? MODEL_CAPABILITIES[0],
+    [selectedModel]
+  );
+  const currentConversationStorageKey = conversationStorageKey(currentEnterprise?.id);
+
+  useEffect(() => {
+    if (localStorage.getItem(CONVERSATION_HISTORY_RESET_KEY) === 'done') {
+      setIsConversationHistoryResetting(false);
+      return;
+    }
+    openConversationRequestRef.current += 1;
+    clearConversationStorage();
+    setConversationId(null);
+    setMessages([]);
+    window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: null } }));
+    window.dispatchEvent(new CustomEvent('geo-agent-conversations-cleared'));
+    if (!window.geoAgent?.clearConversationHistory) {
+      localStorage.setItem(CONVERSATION_HISTORY_RESET_KEY, 'done');
+      setIsConversationHistoryResetting(false);
+      return;
+    }
+    window.geoAgent.clearConversationHistory()
+      .then((response) => {
+        localStorage.setItem(CONVERSATION_HISTORY_RESET_KEY, 'done');
+        window.dispatchEvent(new CustomEvent('geo-agent-conversations-refresh'));
+        if (response?.backup_path) {
+          console.info('Conversation history cleared. Backup:', response.backup_path);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to clear conversation history', error);
+      })
+      .finally(() => {
+        setIsConversationHistoryResetting(false);
+      });
+  }, []);
+
+  const refreshWorkflowState = async (geoProjectId = geoProject?.id) => {
+    if (!geoProjectId || !window.geoAgent?.getGeoWorkflowState) {
+      setWorkflowState(null);
+      return null;
+    }
+    try {
+      const state = await window.geoAgent.getGeoWorkflowState(geoProjectId);
+      setWorkflowState(state);
+      return state;
+    } catch {
+      setWorkflowState(null);
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    setDeepThinking(selectedCapability.defaultDeepThinking);
+    setWebSearch(selectedCapability.defaultWebSearch);
+  }, [selectedCapability]);
+
+  useEffect(() => {
+    if (!window.geoAgent?.getConfigStatus) {
+      return;
+    }
+
+    window.geoAgent.getConfigStatus()
+      .then(setConfigStatus)
+      .catch(() => setConfigStatus(null));
+  }, []);
+
+  useEffect(() => {
+    if (!window.geoAgent?.getSkills) {
+      return;
+    }
+
+    window.geoAgent.getSkills()
+      .then((response) => setSkills(response.skills ?? []))
+      .catch(() => setSkills([]));
+  }, []);
+
+  useEffect(() => {
+    if (hasEnterprises || selectedSkill || conversationId || messages.length > 0) {
+      return;
+    }
+    const knowledgeSkill = skills.find((skill) => skill.id === 'knowledge-base-ingest' || skill.name.includes('知识库'));
+    if (knowledgeSkill) {
+      setSelectedSkill(knowledgeSkill);
+    }
+  }, [conversationId, hasEnterprises, messages.length, selectedSkill, skills]);
+
+  useEffect(() => {
+    if (!hasEnterprises || !currentEnterprise?.id || !window.geoAgent?.ensureGeoProject) {
+      setGeoProject(null);
+      setWorkflowState(null);
+      return;
+    }
+    window.geoAgent.ensureGeoProject(currentEnterprise.id)
+      .then((project) => {
+        setGeoProject(project);
+        refreshWorkflowState(project.id).catch(() => undefined);
+      })
+      .catch(() => {
+        setGeoProject(null);
+        setWorkflowState(null);
+      });
+  }, [currentEnterprise?.id, hasEnterprises]);
+
+  useEffect(() => {
+    if (geoProject?.current_phase !== 'ready_for_check') {
+      return;
+    }
+    const platform = selectedCapability.providerKey;
+    if (hasPhaseTwoMessageFor(messages, geoProject, platform)) {
+      return;
+    }
+    const key = phaseTwoPromptKey(geoProject.project_id, conversationId, selectedCapability.providerKey);
+    if (readPhaseTwoPromptKeys().includes(key)) {
+      return;
+    }
+    if (phaseTwoPromptInFlightRef.current.has(key)) {
+      return;
+    }
+    appendPhaseTwoPrompt(geoProject, { platform }).catch(() => undefined);
+  }, [conversationId, geoProject?.id, geoProject?.current_phase, messages.length, selectedCapability.providerKey]);
+
+  useEffect(() => {
+    if (isConversationHistoryResetting) {
+      return;
+    }
+    const storedConversationId = localStorage.getItem(currentConversationStorageKey);
+    if (storedConversationId && window.geoAgent?.getConversation) {
+      openConversation(storedConversationId, { silent: true, storageKey: currentConversationStorageKey }).catch(() => {
+        clearConversationStorageById(storedConversationId);
+        localStorage.removeItem(currentConversationStorageKey);
+        startNewConversation({ silent: true });
+      });
+      return;
+    }
+    setConversationId(null);
+    setMessages([]);
+  }, [currentConversationStorageKey, isConversationHistoryResetting]);
+
+  useEffect(() => {
+    const handleOpenConversation = (event: Event) => {
+      const nextId = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (nextId) {
+        openConversation(nextId);
+      }
+    };
+    const handleNewConversation = () => startNewConversation();
+    const handleDeletedConversation = (event: Event) => {
+      const deletedId = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (!deletedId) {
+        return;
+      }
+      clearConversationStorageById(deletedId);
+      if (deletedId === conversationId || localStorage.getItem(currentConversationStorageKey) === deletedId) {
+        startNewConversation({ silent: true });
+      }
+    };
+    const handleStartPhaseTwo = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string }>).detail;
+      if (!detail?.projectId || !window.geoAgent?.ensureGeoProject) {
+        return;
+      }
+      window.geoAgent.ensureGeoProject(detail.projectId)
+        .then((project) => {
+          setGeoProject(project);
+          refreshWorkflowState(project.id).catch(() => undefined);
+          appendPhaseTwoPrompt(project, { force: true }).catch(() => undefined);
+        })
+        .catch(() => undefined);
+    };
+    window.addEventListener('geo-agent-open-conversation', handleOpenConversation);
+    window.addEventListener('geo-agent-new-conversation', handleNewConversation);
+    window.addEventListener('geo-agent-conversation-deleted', handleDeletedConversation);
+    window.addEventListener('geo-agent-start-phase-two', handleStartPhaseTwo);
+    return () => {
+      window.removeEventListener('geo-agent-open-conversation', handleOpenConversation);
+      window.removeEventListener('geo-agent-new-conversation', handleNewConversation);
+      window.removeEventListener('geo-agent-conversation-deleted', handleDeletedConversation);
+      window.removeEventListener('geo-agent-start-phase-two', handleStartPhaseTwo);
+    };
+  }, [conversationId, currentConversationStorageKey]);
+
+  useEffect(() => {
+    const closeMenusWhenOutsideInput = (event: PointerEvent | FocusEvent) => {
+      const target = event.target as Node;
+      if (!inputShellRef.current?.contains(target)) {
+        setIsModelDropdownOpen(false);
+        setIsOptionsOpen(false);
+        setIsSkillsOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', closeMenusWhenOutsideInput);
+    document.addEventListener('focusin', closeMenusWhenOutsideInput);
+    return () => {
+      document.removeEventListener('pointerdown', closeMenusWhenOutsideInput);
+      document.removeEventListener('focusin', closeMenusWhenOutsideInput);
+    };
+  }, []);
+
+  const sendMessage = async (text?: string, files: PromptAttachment[] = []) => {
+    const knowledgeSkill = skills.find((skill) => skill.id === 'knowledge-base-ingest' || skill.name.includes('知识库'));
+    const activeSkill = selectedSkill ?? (!hasEnterprises ? knowledgeSkill ?? null : null);
+    const isKnowledgeIngestSkill = !!activeSkill && (activeSkill.id === 'knowledge-base-ingest' || activeSkill.name.includes('知识库'));
+    const hasFiles = files.length > 0;
+    const rawContent = (text ?? inputValue).trim();
+    const knowledgeIntent = inferKnowledgeIntent(rawContent, hasFiles, isKnowledgeIngestSkill);
+    const shouldUseDispatcher = hasFiles || isKnowledgeIngestSkill;
+    const content = rawContent
+      || (hasFiles ? `已上传 ${files.length} 个附件，请解析并写入企业知识库。` : '')
+      || (activeSkill ? `请开始使用${activeSkill.name}技能，引导我完成任务。` : '');
+    if ((!content && !hasFiles) || isSending) {
+      return;
+    }
+
+    const assistantId = `assistant-${Date.now()}`;
+    setInputValue('');
+    setSelectedSkill(null);
+    setIsSending(true);
+    setMessages((current) => [
+      ...current,
+      { id: `user-${Date.now()}`, role: 'user', content },
+      {
+        id: assistantId,
+        role: 'assistant',
+        content: '',
+        reasoning: '正在理解 GEO 任务',
+        status: 'streaming',
+      },
+    ]);
+
+    try {
+      if (!window.geoAgent) {
+        throw new Error('请在 Electron 桌面模式中使用本地 GEO-Agent 后端。');
+      }
+
+      let activeProjectId = knowledgeIntent === 'create'
+        ? undefined
+        : hasEnterprises ? currentEnterprise.id : undefined;
+      if ((hasFiles || isKnowledgeIngestSkill) && knowledgeIntent !== 'chat') {
+        if (!window.geoAgent.createKnowledgeDraft) {
+          throw new Error('当前桌面端尚未暴露知识库草稿接口，请完全关闭并重新启动 Electron 后再试。');
+        }
+        const assets = await Promise.all(files.map(filePartToKnowledgeAsset));
+        const draft = await window.geoAgent.createKnowledgeDraft({
+          message: content,
+          conversation_id: conversationId,
+          intent: knowledgeIntent,
+          project_id: activeProjectId,
+          skill_id: activeSkill?.id,
+          assets,
+        });
+        if (draft.conversation_id) {
+          setConversationId(draft.conversation_id);
+          localStorage.setItem(currentConversationStorageKey, draft.conversation_id);
+          window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: draft.conversation_id } }));
+        }
+        setMessages((current) => updateMessage(current, assistantId, {
+          content: '我已根据资料生成企业知识库草稿。请先核对下方模板内容，确认后我再正式建立知识库并生成本地索引。',
+          reasoning: `已解析 ${files.length} 个附件，调度模型已按知识库录入技能生成结构化草稿。确认前不会写入正式企业知识库。`,
+          knowledgeDraft: draft,
+          confirmationState: 'approval-requested',
+          status: 'complete',
+        }));
+        return;
+      }
+
+      const selectedProvider = shouldUseDispatcher
+        ? configStatus?.providers.dispatcher
+        : configStatus?.providers[selectedCapability.providerKey];
+      if (selectedProvider && !selectedProvider.configured) {
+        throw new Error(
+          `${shouldUseDispatcher ? '鲸杉GEO-Agent 调度模型' : selectedCapability.label} 尚未读取到 API Key。请确认项目根目录 .env 已配置对应 key；如果刚修改过 .env，请重启桌面端后再试。`
+        );
+      }
+
+      const options = {
+        deepThinking: shouldUseDispatcher ? true : selectedCapability.supportsDeepThinking ? deepThinking : false,
+        webSearch: shouldUseDispatcher ? false : selectedCapability.supportsWebSearch ? webSearch : false,
+        searchContext: !shouldUseDispatcher && selectedCapability.supportsWebSearch && webSearch
+          ? buildSearchContext(content, currentEnterprise)
+          : undefined,
+        projectId: activeProjectId,
+        skillId: activeSkill?.id,
+      };
+      const requestModel = shouldUseDispatcher ? '鲸杉GEO-Agent 调度' : selectedModel;
+
+      if (window.geoAgent.sendChatStream) {
+        const finalEvent = await window.geoAgent.sendChatStream(
+          content,
+          conversationId,
+          requestModel,
+          options,
+          (event) => {
+            if (event.type === 'meta' && event.conversation_id) {
+              setConversationId(event.conversation_id);
+              localStorage.setItem(currentConversationStorageKey, event.conversation_id);
+            }
+            if (event.type === 'status' && event.message) {
+              setMessages((current) => updateMessage(current, assistantId, {
+                reasoning: hasFiles ? `已接收 ${files.length} 个附件，正在解析并写入知识库。${event.message}` : event.message,
+                status: 'streaming',
+              }));
+            }
+            if (event.type === 'delta' && event.text) {
+              setMessages((current) => appendMessageText(current, assistantId, event.text ?? ''));
+            }
+            if (event.type === 'reasoning_delta' && event.text) {
+              setMessages((current) => appendMessageText(current, assistantId, event.text ?? '', 'reasoningContent'));
+            }
+            if (event.type === 'search' && event.search_query) {
+              setMessages((current) => updateMessage(current, assistantId, (message) => {
+                const existingSteps = message.liveSearchSteps ?? [];
+                const existingStep = existingSteps.find((step) => step.query === event.search_query);
+                const nextSteps = existingStep
+                  ? existingSteps.map((step) => step.query === event.search_query
+                    ? { ...step, status: event.search_status ?? step.status }
+                    : step)
+                  : [...existingSteps, { query: event.search_query ?? '', status: event.search_status ?? 'in_progress' }];
+                return {
+                  ...message,
+                  liveSearchSteps: nextSteps,
+                  searchQueries: Array.from(new Set([...(message.searchQueries ?? []), event.search_query ?? ''])).filter(Boolean),
+                  searchActions: event.search_action
+                    ? [...(message.searchActions ?? []), event.search_action]
+                    : message.searchActions,
+                  status: 'streaming',
+                };
+              }));
+            }
+            if (event.type === 'done') {
+              setMessages((current) => updateMessage(current, assistantId, {
+                status: event.error ? 'error' : 'complete',
+                ...(event.content ? { content: event.content } : {}),
+                sources: event.sources ?? [],
+                searchQueries: event.search_queries ?? [],
+                searchActions: event.search_actions ?? [],
+                searchUsage: event.search_usage ?? {},
+                reasoningContent: event.reasoning_content ?? undefined,
+                provider: event.provider,
+                model: event.model,
+                error: event.error,
+                reasoning: `${hasFiles ? `已解析 ${files.length} 个附件并写入企业知识库。` : ''}${buildAssistantReasoning(event.provider, event.model, {
+                  deepThinking,
+                  webSearch: selectedCapability.supportsWebSearch && webSearch,
+                  dispatcher: shouldUseDispatcher,
+                  error: Boolean(event.error),
+                })}`,
+              }));
+            }
+          }
+        );
+        setConversationId(finalEvent.conversation_id);
+        localStorage.setItem(currentConversationStorageKey, finalEvent.conversation_id);
+        window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: finalEvent.conversation_id } }));
+      } else {
+        const response = await window.geoAgent.sendChat(content, conversationId, requestModel, options);
+        setConversationId(response.conversation_id);
+        localStorage.setItem(currentConversationStorageKey, response.conversation_id);
+        setMessages((current) => updateMessage(current, assistantId, {
+          reasoning: `${hasFiles ? `已解析 ${files.length} 个附件并写入企业知识库。` : ''}${buildAssistantReasoning(response.provider, response.model, {
+            deepThinking,
+            webSearch: selectedCapability.supportsWebSearch && webSearch,
+            dispatcher: shouldUseDispatcher,
+            error: Boolean(response.error),
+          })}`,
+          content: response.content,
+          sources: response.sources ?? [],
+          searchQueries: response.search_queries ?? [],
+          searchActions: response.search_actions ?? [],
+          searchUsage: response.search_usage ?? {},
+          reasoningContent: response.reasoning_content ?? undefined,
+          provider: response.provider,
+          model: response.model,
+          error: response.error,
+          status: response.error ? 'error' : 'complete',
+        }));
+        window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: response.conversation_id } }));
+      }
+    } catch (error) {
+      setMessages((current) => updateMessage(current, assistantId, {
+        content: normalizeChatError(error),
+        status: 'error',
+      }));
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const setSuggestedPrompt = (suggestion: string) => {
+    setInputValue(suggestion);
+  };
+
+  const appendPhaseTwoPrompt = async (project: GeoAgentGeoProject, options?: { force?: boolean; platform?: 'doubao' | 'deepseek' }) => {
+    if (project.current_phase !== 'ready_for_check' && !options?.force) {
+      return;
+    }
+    const platform = options?.platform ?? selectedCapability.providerKey;
+    const key = phaseTwoPromptKey(project.project_id, conversationId, platform);
+    if (!options?.force && readPhaseTwoPromptKeys().includes(key)) {
+      return;
+    }
+    if (phaseTwoPromptInFlightRef.current.has(key)) {
+      return;
+    }
+    if (!window.geoAgent?.createGeoPhaseTwoPrompt) {
+      return;
+    }
+    if (!options?.force && hasPhaseTwoMessageFor(messages, project, platform)) {
+      return;
+    }
+    phaseTwoPromptInFlightRef.current.add(key);
+    try {
+      const response = await window.geoAgent.createGeoPhaseTwoPrompt(project.id, platform, conversationId);
+      setConversationId(response.conversation_id);
+      localStorage.setItem(conversationStorageKey(project.project_id), response.conversation_id);
+      setMessages((current) => {
+        if (!options?.force && current.some((message) => message.id === response.message.id)) {
+          return current;
+        }
+        if (!options?.force && hasPhaseTwoMessageFor(current, project, platform)) {
+          return current;
+        }
+        return [...current, restoreConversationMessage(response.message)];
+      });
+      window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: response.conversation_id } }));
+    } finally {
+      phaseTwoPromptInFlightRef.current.delete(key);
+    }
+  };
+
+  const confirmPhaseTwo = async (messageId: string, project: GeoAgentGeoProject, platform: 'doubao' | 'deepseek' = selectedCapability.providerKey) => {
+    if (!window.geoAgent?.confirmGeoPhaseTwo) {
+      setMessages((current) => updateMessage(current, messageId, {
+        content: '桌面端主进程接口尚未刷新，请完全关闭并重新启动 Electron 后再启动阶段二。',
+        status: 'error',
+      }));
+      return;
+    }
+    setMessages((current) => updateMessage(current, messageId, {
+      confirmationState: 'approval-responded',
+      confirmationApproved: true,
+      content: '',
+      reasoning: `正在同步 GEO 项目状态，并生成${platformLabelFor(platform)}平台排行榜问题池。`,
+      actionBusy: true,
+      phaseTwoExecution: {
+        platform,
+        companyName: project.company_name,
+        activeStep: 0,
+      },
+      status: 'streaming',
+    }));
+    try {
+      const updated = await window.geoAgent.confirmGeoPhaseTwo(project.id, platform, messageId);
+      const platformLabel = platformLabelFor(platform);
+      setGeoProject(updated);
+      await refreshWorkflowState(updated.id);
+      setMessages((current) => updateMessage(current, messageId, {
+        phaseTwoExecution: {
+          platform,
+          companyName: updated.company_name,
+          activeStep: 2,
+        },
+      }));
+      if (!window.geoAgent?.runGeoPhaseTwoReport) {
+        throw new Error('桌面端主进程接口尚未刷新，请完全关闭并重新启动 Electron 后再生成阶段二报告。');
+      }
+      let report: GeoAgentGeoReport | null = null;
+      if (window.geoAgent.runGeoPhaseTwoReportStream) {
+        await window.geoAgent.runGeoPhaseTwoReportStream(updated.id, platform, messageId, (event) => {
+          if (event.type === 'status') {
+            setMessages((current) => updateMessage(current, messageId, {
+              reasoning: event.message ?? event.step_label ?? `正在生成${platformLabelFor(platform)}阶段二排行榜问题池。`,
+              phaseTwoExecution: {
+                platform,
+                companyName: updated.company_name,
+                activeStep: typeof event.step_index === 'number' ? event.step_index : 0,
+              },
+              status: 'streaming',
+            }));
+          }
+          if (event.type === 'summary_delta' && event.text) {
+            setMessages((current) => appendMessageText(current, messageId, event.text ?? ''));
+          }
+          if (event.type === 'result' && event.report) {
+            report = event.report;
+          }
+          if (event.type === 'done' && event.content) {
+            setMessages((current) => updateMessage(current, messageId, { content: event.content }));
+          }
+        });
+      } else {
+        report = await window.geoAgent.runGeoPhaseTwoReport(updated.id, platform, messageId);
+      }
+      if (!report) {
+        throw new Error('阶段二没有返回可用结果，请重试。');
+      }
+      await refreshWorkflowState(updated.id);
+      setMessages((current) => updateMessage(current, messageId, {
+        content: report!.status === 'failed'
+          ? `${platformLabel} 排行榜问题池生成失败：${report!.error_message || '未知错误'}`
+          : `已完成${platformLabel}阶段二：${updated.company_name}\n\n已生成用户问题池和高优先级排行榜问题。下一步是发现高权重信源。`,
+        geoReport: report!,
+        phaseTwoPrompt: undefined,
+        phaseTwoPlatform: undefined,
+        phaseTwoExecution: undefined,
+        confirmationState: 'output-available',
+        confirmationApproved: true,
+        actionBusy: false,
+        status: report!.status === 'failed' ? 'error' : 'complete',
+      }));
+      window.dispatchEvent(new CustomEvent('geo-agent-geo-project-changed', { detail: { projectId: updated.project_id, geoProjectId: updated.id } }));
+    } catch (error) {
+      setMessages((current) => updateMessage(current, messageId, {
+        content: normalizeChatError(error),
+        phaseTwoExecution: undefined,
+        confirmationState: 'approval-requested',
+        confirmationApproved: undefined,
+        actionBusy: false,
+        status: 'error',
+      }));
+    }
+  };
+
+  const cancelPhaseTwo = async (messageId: string, project: GeoAgentGeoProject, platform: 'doubao' | 'deepseek' = selectedCapability.providerKey) => {
+    let updated = project;
+    if (window.geoAgent?.cancelGeoPhaseTwo) {
+      updated = await window.geoAgent.cancelGeoPhaseTwo(project.id, platform, messageId).catch(() => project);
+      setGeoProject(updated);
+    }
+    rememberPhaseTwoPromptKey(phaseTwoPromptKey(project.project_id, conversationId, platform));
+    const platformLabel = platformLabelFor(platform);
+    setMessages((current) => updateMessage(current, messageId, {
+      content: `已暂缓进入${platformLabel}阶段二。${updated.company_name} 的企业知识库仍保持阶段一可用状态，稍后可以从智能助手推荐项或知识库详情页重新启动 ${platformLabel} 排行榜问题池构建。`,
+      phaseTwoPrompt: undefined,
+      phaseTwoPlatform: undefined,
+      confirmationState: 'output-available',
+      confirmationApproved: false,
+      status: 'complete',
+    }));
+    window.dispatchEvent(new CustomEvent('geo-agent-geo-project-changed', { detail: { projectId: project.project_id, geoProjectId: project.id } }));
+  };
+
+  const runSourceDiscoveryFromReport = async (messageId: string, report: GeoAgentGeoReport) => {
+    const platform = report.platform === 'deepseek' ? 'deepseek' : 'doubao';
+    if (!window.geoAgent?.runGeoSourceDiscovery) {
+      setMessages((current) => updateMessage(current, messageId, {
+        content: '桌面端主进程接口尚未刷新，请完全关闭并重新启动 Electron 后再执行高权重信源发现。',
+        status: 'error',
+      }));
+      return;
+    }
+    setMessages((current) => updateMessage(current, messageId, {
+      sourceDiscoveryAttempted: true,
+      actionBusy: true,
+      status: 'complete',
+    }));
+    let stageMessageId = '';
+    const ensureStageMessage = () => {
+      if (stageMessageId) {
+        return stageMessageId;
+      }
+      stageMessageId = `stage-three-${Date.now()}`;
+      setMessages((current) => upsertMessage(current, {
+        id: stageMessageId,
+        role: 'assistant',
+        content: '',
+        reasoning: `正在发现${platformLabelFor(platform)}高权重信源。`,
+        phaseTwoPlatform: platform,
+        sourceDiscoveryExecution: { platform, activeStep: 0 },
+        status: 'streaming',
+      }));
+      return stageMessageId;
+    };
+    try {
+      let discovery: GeoAgentGeoSourceDiscovery | null = null;
+      if (window.geoAgent.runGeoSourceDiscoveryStream) {
+        await window.geoAgent.runGeoSourceDiscoveryStream(report.geo_project_id, platform, report, null, conversationId, messageId, (event) => {
+          if (event.type === 'meta' && event.message && typeof event.message === 'object') {
+            const restored = restoreConversationMessage(event.message as GeoAgentConversationMessage);
+            const previousId = stageMessageId || '';
+            stageMessageId = restored.id;
+            if (event.conversation_id) {
+              setConversationId(event.conversation_id);
+            }
+            const nextMessage: ChatMessage = {
+              ...restored,
+              reasoning: `正在发现${platformLabelFor(platform)}高权重信源。`,
+              sourceDiscoveryExecution: { platform, activeStep: 0 },
+              status: 'streaming',
+            };
+            setMessages((current) => previousId
+              ? replaceMessageId(current, previousId, nextMessage)
+              : upsertMessage(current, nextMessage));
+          }
+          if (event.type === 'status') {
+            const targetId = ensureStageMessage();
+            const statusMessage = typeof event.message === 'string' ? event.message : undefined;
+            setMessages((current) => updateMessage(current, targetId, {
+              reasoning: statusMessage ?? event.step_label ?? `正在发现${platformLabelFor(platform)}高权重信源。`,
+              sourceDiscoveryExecution: {
+                platform,
+                activeStep: typeof event.step_index === 'number' ? event.step_index : 0,
+              },
+              status: 'streaming',
+            }));
+          }
+          if (event.type === 'summary_delta' && event.text) {
+            const targetId = ensureStageMessage();
+            setMessages((current) => appendMessageText(current, targetId, event.text ?? ''));
+          }
+          if (event.type === 'result' && event.source_discovery) {
+            discovery = event.source_discovery;
+          }
+          if (event.type === 'done' && event.content) {
+            const targetId = ensureStageMessage();
+            setMessages((current) => updateMessage(current, targetId, { content: event.content }));
+          }
+        });
+      } else {
+        const targetId = ensureStageMessage();
+        await wait(450);
+        setMessages((current) => updateMessage(current, targetId, {
+          sourceDiscoveryExecution: { platform, activeStep: 1 },
+        }));
+        discovery = await window.geoAgent.runGeoSourceDiscovery(report.geo_project_id, platform, report, null);
+      }
+      if (!discovery) {
+        throw new Error('阶段三没有返回可用结果，请重试。');
+      }
+      await refreshWorkflowState(report.geo_project_id);
+      const targetId = ensureStageMessage();
+      setMessages((current) => updateMessage(current, targetId, {
+        content: `已完成${platformLabelFor(platform)}阶段三：高权重信源发现。`,
+        sourceDiscovery: discovery!,
+        sourceDiscoveryExecution: undefined,
+        actionBusy: false,
+        status: discovery!.discovery.status === 'failed' ? 'error' : 'complete',
+      }));
+      window.dispatchEvent(new CustomEvent('geo-agent-geo-project-changed', { detail: { projectId: report.enterprise_project_id, geoProjectId: report.geo_project_id } }));
+    } catch (error) {
+      const targetId = ensureStageMessage();
+      setMessages((current) => updateMessage(current, targetId, {
+        content: `${normalizeChatError(error)}\n\n我已经尝试从当前阶段二结果回填问题池。若仍失败，说明当前消息里没有可用的排行榜问题池结构，需要重新执行阶段二问题池构建。`,
+        sourceDiscoveryExecution: undefined,
+        sourceDiscoveryAttempted: true,
+        status: 'error',
+      }));
+    }
+  };
+
+  const requestSupportArticles = (messageId: string, discovery: GeoAgentGeoSourceDiscovery) => {
+    const platform = discovery.platform === 'deepseek' ? 'deepseek' : 'doubao';
+    const promptMessageId = `stage-four-prompt-${Date.now()}`;
+    setMessages((current) => [
+      ...updateMessage(current, messageId, { actionBusy: true, status: 'complete' }),
+      {
+        id: promptMessageId,
+        role: 'assistant',
+        content: `已准备进入${platformLabelFor(platform)}阶段四：咨询/测评支撑内容生成。`,
+        phaseTwoPlatform: platform,
+        supportArticlesPrompt: discovery,
+        confirmationState: 'approval-requested',
+        confirmationApproved: undefined,
+        status: 'complete',
+      },
+    ]);
+  };
+
+  const runSupportArticlesFromDiscovery = async (
+    messageId: string,
+    discovery: GeoAgentGeoSourceDiscovery
+  ) => {
+    const platform = discovery.platform === 'deepseek' ? 'deepseek' : 'doubao';
+    if (!window.geoAgent?.runGeoSupportArticles) {
+      setMessages((current) => updateMessage(current, messageId, {
+        content: '桌面端主进程接口尚未刷新，请完全关闭并重新启动 Electron 后再生成阶段四支撑内容。',
+        status: 'error',
+      }));
+      return;
+    }
+    let stageMessageId = messageId;
+    const shouldCreateBackendMessage = messageId.startsWith('stage-four-prompt-');
+    setMessages((current) => updateMessage(current, messageId, {
+      content: '',
+      reasoning: `正在生成${platformLabelFor(platform)}阶段四支撑内容。`,
+      supportArticlesPrompt: undefined,
+      confirmationState: 'approval-responded',
+      confirmationApproved: true,
+      actionBusy: true,
+      articleDraftExecution: {
+        platform,
+        activeStep: 0,
+      },
+      articleDraftAttempts: {
+        consulting: true,
+        review: true,
+      },
+      status: 'streaming',
+    }));
+    try {
+      let result: GeoAgentGeoSupportArticleRunResponse | null = null;
+      if (window.geoAgent.runGeoSupportArticlesStream) {
+        await window.geoAgent.runGeoSupportArticlesStream(discovery.geo_project_id, platform, {
+          messageId: shouldCreateBackendMessage ? null : messageId,
+          conversationId: shouldCreateBackendMessage ? conversationId : null,
+          parentMessageId: shouldCreateBackendMessage ? messageId : null,
+        }, (event) => {
+          if (event.type === 'meta' && event.message && typeof event.message === 'object') {
+            const restored = restoreConversationMessage(event.message as GeoAgentConversationMessage);
+            const previousId = stageMessageId;
+            stageMessageId = restored.id;
+            if (event.conversation_id) {
+              setConversationId(event.conversation_id);
+            }
+            const nextMessage: ChatMessage = {
+              ...restored,
+              reasoning: `正在生成${platformLabelFor(platform)}阶段四支撑内容。`,
+              articleDraftExecution: { platform, activeStep: 0 },
+              articleDraftAttempts: { consulting: true, review: true },
+              status: 'streaming',
+            };
+            setMessages((current) => replaceMessageId(current, previousId, nextMessage));
+          }
+          if (event.type === 'status') {
+            const statusMessage = typeof event.message === 'string' ? event.message : undefined;
+            setMessages((current) => updateMessage(current, stageMessageId, {
+              reasoning: statusMessage ?? event.step_label ?? `正在生成${platformLabelFor(platform)}阶段四支撑内容。`,
+              articleDraftExecution: {
+                platform,
+                activeStep: typeof event.step_index === 'number' ? event.step_index : 0,
+              },
+              status: 'streaming',
+            }));
+          }
+          if (event.type === 'summary_delta' && event.text) {
+            setMessages((current) => appendMessageText(current, stageMessageId, event.text ?? ''));
+          }
+          if (event.type === 'result' && event.support_articles) {
+            result = event.support_articles;
+          }
+          if (event.type === 'done' && event.content) {
+            setMessages((current) => updateMessage(current, stageMessageId, { content: event.content }));
+          }
+        });
+      } else {
+        await wait(450);
+        setMessages((current) => updateMessage(current, stageMessageId, {
+          articleDraftExecution: { platform, activeStep: 1 },
+        }));
+        result = await window.geoAgent.runGeoSupportArticles(discovery.geo_project_id, platform, { messageId: shouldCreateBackendMessage ? null : messageId });
+      }
+      if (!result) {
+        throw new Error('阶段四没有返回可用结果，请重试。');
+      }
+      await refreshWorkflowState(discovery.geo_project_id);
+      setMessages((current) => updateMessage(current, stageMessageId, {
+        content: result!.status === 'completed'
+          ? `已完成${platformLabelFor(platform)}阶段四支撑内容。\n\n咨询类和测评类草稿已生成。请先查看并确认两篇草稿，确认完成后阶段五才会开放。`
+          : `阶段四支撑内容部分生成失败：${result!.error_message || '请查看失败项并重试。'}`,
+        supportArticles: result!,
+        articleDraftExecution: undefined,
+        actionBusy: false,
+        status: result!.status === 'completed' ? 'complete' : 'error',
+      }));
+      window.dispatchEvent(new CustomEvent('geo-agent-geo-project-changed', { detail: { projectId: discovery.enterprise_project_id, geoProjectId: discovery.geo_project_id } }));
+    } catch (error) {
+      setMessages((current) => updateMessage(current, stageMessageId, {
+        content: normalizeChatError(error),
+        articleDraftExecution: undefined,
+        confirmationState: 'approval-requested',
+        confirmationApproved: undefined,
+        actionBusy: false,
+        supportArticlesPrompt: discovery,
+        status: 'error',
+      }));
+    }
+  };
+
+  const cancelSupportArticles = (messageId: string) => {
+    setMessages((current) => updateMessage(current, messageId, {
+      content: '已暂缓生成阶段四支撑内容。当前信源发现结果已保留，稍后可重新启动支撑内容生成。',
+      supportArticlesPrompt: undefined,
+      confirmationState: 'output-available',
+      confirmationApproved: false,
+      actionBusy: false,
+      status: 'complete',
+    }));
+  };
+
+  const confirmArticleDraft = async (messageId: string, articleId: string) => {
+    if (!window.geoAgent?.confirmGeoArticleDraft) {
+      setMessages((current) => updateMessage(current, messageId, {
+        content: '桌面端主进程接口尚未刷新，请完全关闭并重新启动 Electron 后再确认草稿。',
+        status: 'error',
+      }));
+      return;
+    }
+    try {
+      const draft = await window.geoAgent.confirmGeoArticleDraft(articleId, messageId);
+      await refreshWorkflowState(draft.geo_project_id);
+      setMessages((current) => updateSupportArticleDraft(current, messageId, draft));
+      window.dispatchEvent(new CustomEvent('geo-agent-geo-project-changed', { detail: { geoProjectId: draft.geo_project_id } }));
+    } catch (error) {
+      setMessages((current) => updateMessage(current, messageId, {
+        content: normalizeChatError(error),
+        status: 'error',
+      }));
+    }
+  };
+
+  const runArticleDraftFromDiscovery = async (
+    messageId: string,
+    discovery: GeoAgentGeoSourceDiscovery,
+    articleType: 'consulting' | 'review'
+  ) => {
+    const platform = discovery.platform === 'deepseek' ? 'deepseek' : 'doubao';
+    if (!window.geoAgent?.runGeoArticleDraft) {
+      setMessages((current) => updateMessage(current, messageId, {
+        content: '桌面端主进程接口尚未刷新，请完全关闭并重新启动 Electron 后再生成支撑文章。',
+        status: 'error',
+      }));
+      return;
+    }
+    setMessages((current) => updateMessage(current, messageId, {
+      content: '',
+      reasoning: `正在生成${platformLabelFor(platform)}${articleTypeLabelFor(articleType)}支撑文章。`,
+      actionBusy: true,
+      articleDraftExecution: {
+        platform,
+        articleType,
+        activeStep: 0,
+      },
+      articleDraftAttempts: {
+        ...(current.find((item) => item.id === messageId)?.articleDraftAttempts ?? {}),
+        [articleType]: true,
+      },
+      status: 'streaming',
+    }));
+    try {
+      await wait(450);
+      setMessages((current) => updateMessage(current, messageId, {
+        articleDraftExecution: { platform, articleType, activeStep: 1 },
+      }));
+      const draft = await window.geoAgent.runGeoArticleDraft(discovery.geo_project_id, platform, articleType, { messageId });
+      setMessages((current) => updateMessage(current, messageId, {
+        content: draft.status === 'failed'
+          ? `${articleTypeLabelFor(articleType)}支撑文章生成失败：${draft.draft.error_message || '未知错误'}`
+          : `已生成${platformLabelFor(platform)}${articleTypeLabelFor(articleType)}支撑文章草稿。\n\n下一步继续补齐咨询类和测评类两类支撑内容，完成后再进入排行榜文章。`,
+        articleDraft: draft,
+        articleDraftExecution: undefined,
+        actionBusy: false,
+        status: draft.status === 'failed' ? 'error' : 'complete',
+      }));
+      window.dispatchEvent(new CustomEvent('geo-agent-geo-project-changed', { detail: { geoProjectId: discovery.geo_project_id } }));
+    } catch (error) {
+      setMessages((current) => updateMessage(current, messageId, {
+        content: normalizeChatError(error),
+        articleDraftExecution: undefined,
+        actionBusy: false,
+        status: 'error',
+      }));
+    }
+  };
+
+  const confirmKnowledgeDraft = async (messageId: string, draft: GeoAgentKnowledgeDraft) => {
+    if (!window.geoAgent?.confirmKnowledgeDraft) {
+      setMessages((current) => updateMessage(current, messageId, {
+        content: '桌面端主进程接口尚未刷新，请完全关闭并重新启动 Electron 后再确认知识库草稿。',
+        status: 'error',
+      }));
+      return;
+    }
+    setIsSending(true);
+    setMessages((current) => updateMessage(current, messageId, {
+      confirmationState: 'approval-responded',
+      confirmationApproved: true,
+      actionBusy: true,
+      reasoning: '用户已确认知识库草稿，正在正式写入本地知识库并建立索引。',
+    }));
+    try {
+      const response = await window.geoAgent.confirmKnowledgeDraft(draft.id, draft.profile);
+      await refreshEnterprises();
+      setEnterpriseId(response.project_id);
+      window.dispatchEvent(new CustomEvent('geo-agent-enterprises-refresh'));
+      window.dispatchEvent(new CustomEvent('geo-agent-knowledge-changed', { detail: { projectId: response.project_id } }));
+      const nextGeoProject = window.geoAgent?.ensureGeoProject
+        ? await window.geoAgent.ensureGeoProject(response.project_id)
+        : null;
+      if (nextGeoProject) {
+        setGeoProject(nextGeoProject);
+        await refreshWorkflowState(nextGeoProject.id);
+      }
+      setMessages((current) => updateMessage(current, messageId, {
+        content: `已建立「${response.profile.company_name}」企业知识库。\n\n已生成 ${response.total} 条知识条目，并完成本地索引。后续 ChatBox、文章生成和网页生成都会优先检索这份企业资料。`,
+        knowledgeDraft: undefined,
+        confirmationState: 'output-available',
+        confirmationApproved: true,
+        actionBusy: false,
+        status: 'complete',
+      }));
+      if (nextGeoProject?.current_phase === 'ready_for_check') {
+        appendPhaseTwoPrompt(nextGeoProject, { force: true, platform: selectedCapability.providerKey }).catch(() => undefined);
+      }
+    } catch (error) {
+      setMessages((current) => updateMessage(current, messageId, {
+        content: normalizeChatError(error),
+        confirmationState: 'approval-requested',
+        confirmationApproved: undefined,
+        actionBusy: false,
+        status: 'error',
+      }));
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const rejectKnowledgeDraft = async (messageId: string, draft: GeoAgentKnowledgeDraft) => {
+    if (window.geoAgent?.rejectKnowledgeDraft) {
+      await window.geoAgent.rejectKnowledgeDraft(draft.id).catch(() => undefined);
+    }
+    setMessages((current) => updateMessage(current, messageId, {
+      content: '已取消本次知识库草稿，未写入企业知识库。你可以继续上传资料或补充说明后重新生成。',
+      knowledgeDraft: undefined,
+      confirmationState: 'output-available',
+      confirmationApproved: false,
+      actionBusy: false,
+      status: 'complete',
+    }));
+  };
+
+  const selectSkill = (skill: GeoAgentSkill) => {
+    setSelectedSkill(skill);
+    setIsSkillsOpen(false);
+    setIsOptionsOpen(false);
+    setIsModelDropdownOpen(false);
+  };
+
+  const startNewConversation = (options?: { silent?: boolean }) => {
+    openConversationRequestRef.current += 1;
+    setConversationId(null);
+    setMessages([]);
+    setInputValue('');
+    setSelectedSkill(null);
+    localStorage.removeItem(currentConversationStorageKey);
+    if (!options?.silent) {
+      window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: null } }));
+    }
+  };
+
+  const openConversation = async (nextConversationId: string, options?: { silent?: boolean; storageKey?: string }) => {
+    if (!window.geoAgent?.getConversation) {
+      return;
+    }
+    const requestId = openConversationRequestRef.current + 1;
+    openConversationRequestRef.current = requestId;
+    const response = await window.geoAgent.getConversation(nextConversationId);
+    if (requestId !== openConversationRequestRef.current) {
+      return;
+    }
+    if (!response.conversation.project_id || (currentEnterprise?.id && response.conversation.project_id !== currentEnterprise.id)) {
+      clearConversationStorageById(nextConversationId);
+      setMessages([{
+        id: `assistant-conversation-mismatch-${Date.now()}`,
+        role: 'assistant',
+        content: response.conversation.project_id
+          ? '这条历史会话属于另一个企业。请先切换到对应企业后再打开，避免知识库上下文串台。'
+          : '这条历史会话没有绑定当前企业，已停止自动恢复，避免知识库上下文串台。',
+        status: 'error',
+      }]);
+      return;
+    }
+    const restoredMessages = response.messages
+      .filter((message) => message.role === 'user' || message.role === 'assistant')
+      .map((message) => restoreConversationMessage(message));
+    setConversationId(response.conversation.id);
+    setMessages(restoredMessages);
+    setInputValue('');
+    setSelectedSkill(null);
+    localStorage.setItem(options?.storageKey ?? conversationStorageKey(response.conversation.project_id ?? currentEnterprise?.id), response.conversation.id);
+    if (!options?.silent) {
+      window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: response.conversation.id } }));
+    }
+  };
+
+  const showEmptyState = messages.length === 0;
+  const selectedPlatformWorkflow = workflowState?.platforms[selectedCapability.providerKey];
+  const selectedStageTwoStatus = selectedPlatformWorkflow?.stages.stage_2?.status;
+  const selectedStageThreeStatus = selectedPlatformWorkflow?.stages.stage_3?.status;
+  const selectedStageFourStatus = selectedPlatformWorkflow?.stages.stage_4?.status;
+
+  const emptySuggestions = hasEnterprises
+    ? workflowState?.knowledge_base_ready || geoProject?.current_phase === 'ready_for_check'
+      ? [
+        {
+          icon: GraduationCap,
+          text: selectedStageFourStatus === 'completed'
+            ? '阶段五已就绪'
+            : selectedStageThreeStatus === 'completed'
+              ? '生成支撑内容'
+              : selectedStageTwoStatus === 'completed'
+                ? '发现高权重信源'
+                : '生成排行榜问题池',
+          value: selectedStageFourStatus === 'completed'
+            ? `${currentEnterprise.name}的阶段四支撑草稿已确认，阶段五排行榜文章模块开放后即可继续。`
+            : selectedStageThreeStatus === 'completed'
+              ? `基于${currentEnterprise.name}已完成的信源发现结果，生成阶段四咨询类和测评类支撑内容。`
+              : selectedStageTwoStatus === 'completed'
+                ? `基于${currentEnterprise.name}的排行榜问题池，继续发现当前所选平台的高权重信源。`
+                : `基于${currentEnterprise.name}的企业知识库，生成当前所选平台的排行榜问题池。`,
+        },
+        {
+          icon: Search,
+          text: '查看初始关键词',
+          value: `请列出${currentEnterprise.name}阶段一生成的初始关键词，并说明这些关键词适合扩展成哪些排行榜问题。`,
+        },
+        {
+          icon: FileText,
+          text: '补充知识库缺口',
+          value: `检查${currentEnterprise.name}企业知识库还有哪些缺失项，优先告诉我进入阶段二前要补什么。`,
+        },
+      ]
+      : [
+        {
+          icon: GraduationCap,
+          text: '分析 GEO 缺口',
+          value: `基于当前企业知识库，分析${currentEnterprise.name}在豆包和 DeepSeek 的 GEO 缺口。`,
+        },
+        {
+          icon: Search,
+          text: '生成长尾关键词',
+          value: `根据${currentEnterprise.name}的企业知识库，生成目标关键词和长尾用户问题。`,
+        },
+        {
+          icon: FileText,
+          text: '规划内容矩阵',
+          value: `基于${currentEnterprise.name}的知识库规划科普、测评、排行榜内容矩阵。`,
+        },
+        {
+          icon: Globe,
+          text: '生成官网方案',
+          value: `为${currentEnterprise.name}生成一个智能托管官网规划。`,
+        },
+      ]
+    : [
+        {
+          icon: Database,
+          text: '建立企业知识库',
+          value: '我想建立企业知识库，请引导我上传资料并生成草稿。',
+        },
+        {
+          icon: Plus,
+          text: '上传企业资料',
+          value: '我准备上传 Word、PDF 或 Markdown 资料，请帮我解析并生成企业知识库草稿。',
+        },
+        {
+          icon: Search,
+          text: '准备目标关键词',
+          value: '请先告诉我建立企业知识库需要哪些目标关键词和长尾用户问题。',
+        },
+        {
+          icon: Info,
+          text: '查看录入要求',
+          value: '请说明建立企业知识库需要准备哪些公司资料、案例、图片和关键词。',
+        },
+      ];
 
   return (
-    <div className="flex flex-col h-[calc(100vh-64px)] relative w-full pt-8 overflow-hidden">
-      
-      {/* Scrollable Chat Area */}
-      <div className="flex-1 overflow-y-auto px-4 sm:px-6 md:px-8 lg:px-xl pb-[140px] z-10 scroll-smooth">
-        
-        {/* Intro */}
-        <div className="flex flex-col items-center justify-center mb-12 mt-8">
-          <h1 className="text-[32px] font-bold text-primary font-heading leading-tight tracking-tight">
-            鲸杉GEO-Agent
-          </h1>
-          
-          {/* Quick Actions */}
-          <div className="flex flex-wrap justify-center gap-4 mt-12 max-w-3xl">
-            <QuickAction icon={Compass} text="📥 补全成都行乐音改资质 (EEAT基建码)" />
-            <QuickAction icon={Globe} text="✨ 一键生成智能托管官网 (AI Web Builder)" />
-            <QuickAction icon={GraduationCap} text="🔍 启动豆包/DeepSeek现状并查体检" />
-            <QuickAction icon={FileText} text="✍️ 创制温饱/发烧阶梯式内容矩阵" />
-          </div>
-        </div>
+    <TooltipProvider>
+    <div className="flex h-[calc(100vh-64px)] min-h-0 w-full flex-col overflow-hidden pt-8">
+      <Conversation className="min-h-0 w-full">
+        <ConversationContent className="mx-auto w-full max-w-4xl gap-8 px-4 pb-8 sm:px-6 md:px-8 lg:px-xl">
+          {showEmptyState && (
+            <div className="mt-10 mb-6 flex w-full flex-col items-center justify-center">
+              <h1 className="font-heading text-[32px] font-bold leading-tight tracking-tight text-primary">
+                鲸杉GEO-Agent
+              </h1>
 
-        {/* Chat Thread Mock */}
-        <div className="flex flex-col gap-8 max-w-4xl mx-auto w-full">
-          {/* User Message */}
-          <div className="flex justify-end w-full">
-            <div className="bg-surface-container-high text-on-surface text-[14px] rounded-2xl rounded-tr-sm px-5 py-3 max-w-[75%] ">
-              我想对我的本地品牌『成都行乐音改』进行GEO生成式引擎优化，目前我们在豆包和DeepSeek里几乎搜索不到，应该怎么开始？
-            </div>
-          </div>
-
-          {/* Agent Reply */}
-          <div className="flex justify-start w-full">
-            
-            <div className="flex flex-col gap-3 max-w-[85%]">
-              
-              {/* Reasoning Block */}
-              <div className="backdrop-blur-md bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl px-4 py-2 inline-flex items-center gap-4 self-start cursor-pointer hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45 transition-all">
-                <div className="flex items-center gap-2 text-secondary">
-                  <Brain className="w-4 h-4" />
-                  <span className="text-[11px] font-bold uppercase tracking-wider">意图识别: geo_optimization • 已匹配 RAG 引擎</span>
-                </div>
-                <span className="font-mono text-[13px] text-on-surface-variant border-l border-outline-variant/60 pl-4">0.85s</span>
-                <ChevronDown className="w-4 h-4 text-on-surface-variant" />
-              </div>
-
-              {/* Message Bubble */}
-              <div className="backdrop-blur-md bg-[#f7f7f5] dark:bg-surface-variant/45 text-on-surface text-[14px] border-transparent bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl rounded-tl-sm p-6 leading-relaxed">
-                <p className="mb-4 text-[15px] leading-relaxed">
-                  您好！我已经为您加载了 **鲸杉GEO-Agent** 本地服务优化流。我们将通过 **RAG管线 & state-machine 驱动的 7 阶段 GEO 优化流程** 全面重组您品牌在两大主流模型中的推荐 and 召回权重。
-                </p>
-                
-                <p className="mb-4 text-[13px] leading-relaxed">
-                  <strong>当前就绪的项目执行路径规划如下：</strong>
-                </p>
-
-                <ul className="list-disc pl-5 space-y-2 mb-4 text-[14px] text-on-surface-variant leading-relaxed">
-                  <li><strong>阶段一：建立自建知识库与词条重塑</strong> — 提取您的德国彩虹代理资质、IASCA 认证案例及 1200+ 字公司背书，将原始词『成都汽车音响』演进为带有地区标识的预设核心词。</li>
-                  <li><strong>阶段二：大模型白盒现状自查（体检）</strong> — 双通道并行诊断『豆包』和『DeepSeek』中无法召回品牌的原因，截获 AI 原生偏好的标题范本与其推荐排行高权重外链。</li>
-                  <li><strong>阶段三：三元组图谱重构</strong> — 切片结构化生成『门店库、方案库、改装案例库、咨询QA问答库』。</li>
-                </ul>
-
-                {/* Data Bento inside chat */}
-                <div className="grid grid-cols-2 gap-4 mt-4">
-                  <div className="bg-[#f7f7f5] dark:bg-surface-variant/45 border border-outline-variant/20 rounded-2xl p-4">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block mb-2">知识库就绪状态</span>
-                    <span className="font-mono text-[13px] text-secondary font-semibold tracking-tight">已导入 3 大源文件 • EEAT 锚点就绪</span>
-                  </div>
-                  <div className="bg-[#f7f7f5] dark:bg-surface-variant/45 border border-outline-variant/20 rounded-2xl p-4">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-on-surface-variant block mb-2">候选关键词探测线</span>
-                    <span className="font-mono text-[13px] text-emerald-600 font-semibold tracking-tight">行乐音改汽车音响、成都专业隔音降噪</span>
+              {!isLoadingEnterprises && !hasEnterprises ? (
+                <div className="mt-6 flex w-full max-w-2xl items-start gap-3 rounded-2xl border border-secondary/20 bg-secondary/10 px-4 py-3 text-left text-[13px] leading-relaxed text-on-surface-variant">
+                  <Info className="mt-0.5 h-4 w-4 shrink-0 text-secondary" />
+                  <div>
+                    <span className="font-bold text-primary">开始优化前需要先建立企业知识库。</span>
+                    <span className="ml-1">你可以上传 Word、PDF、Markdown 或直接粘贴企业资料，我会先生成草稿，确认后再正式入库。</span>
                   </div>
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+              ) : (
+                <p className="mt-5 w-full max-w-2xl whitespace-normal px-4 text-center text-[14px] leading-relaxed text-on-surface-variant">
+                  当前企业：<span className="font-semibold text-primary">{currentEnterprise.name}</span>。可以直接分析 GEO 缺口、生成长尾关键词、规划内容矩阵，或查询企业知识库。
+                </p>
+              )}
 
-      {/* Input Area */}
-      <div className="absolute bottom-0 left-0 w-full p-lg bg-gradient-to-t from-background via-background to-transparent z-20 pb-8">
-        <div className="max-w-4xl mx-auto relative2">
-          <div className="backdrop-blur-xl bg-[#f7f7f5] dark:bg-surface-variant/45  hover: focus-within: p-4 pb-3 flex flex-col transition-all rounded-2xl">
-            {/* Top row: Text area for premium layout */}
-            <textarea 
-              className="w-full bg-transparent border-none outline-none resize-none text-[15px] text-on-surface placeholder:text-on-surface-variant/40 px-2 py-1 min-h-[50px] max-h-[160px] focus:ring-0 leading-relaxed" 
-              placeholder="Do anything with AI..." 
-              rows={2}
+              <Suggestions className="mt-10 flex-wrap justify-center gap-3 whitespace-normal">
+                {emptySuggestions.map((suggestion) => (
+                  <QuickSuggestion
+                    icon={suggestion.icon}
+                    key={suggestion.text}
+                    text={suggestion.text}
+                    value={suggestion.value}
+                    onSelect={setSuggestedPrompt}
+                  />
+                ))}
+              </Suggestions>
+            </div>
+          )}
+
+          {messages.map((message) => (
+            <ChatBubble
+              key={message.id}
+              message={message}
+              onCancelPhaseTwo={cancelPhaseTwo}
+              onConfirmDraft={confirmKnowledgeDraft}
+              onConfirmPhaseTwo={confirmPhaseTwo}
+              onConfirmArticleDraft={confirmArticleDraft}
+              onRejectDraft={rejectKnowledgeDraft}
+              onCancelSupportArticles={cancelSupportArticles}
+              onConfirmSupportArticles={runSupportArticlesFromDiscovery}
+              onRequestSupportArticles={requestSupportArticles}
+              onRunArticleDraft={runArticleDraftFromDiscovery}
+              onRunSourceDiscovery={runSourceDiscoveryFromReport}
+              workflowState={workflowState}
             />
-            
-            {/* Bottom row: Operational Bar */}
-            <div className="flex items-center justify-between mt-3 pt-1 border-t border-outline-variant/5">
-              {/* Left group: Add and Settings Sliders */}
-              <div className="flex items-center gap-1">
-                <motion.button 
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant/70 hover:text-primary hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45 transition-colors" 
-                  title="添加/附件"
-                >
-                  <Plus className="w-5 h-5" />
-                </motion.button>
-                <motion.button 
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant/70 hover:text-primary hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45 transition-colors" 
-                  title="配置选项"
-                >
-                  <SlidersHorizontal className="w-4 h-4" />
-                </motion.button>
-              </div>
-              
-              {/* Right group: Model select dropdown, microphone, and submit button */}
-              <div className="flex items-center gap-2.5">
-                {/* Model dropdown */}
-                <div className="relative">
-                  <motion.button 
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={() => setIsModelDropdownOpen(!isModelDropdownOpen)}
-                    className="flex items-center gap-1.5 bg-transparent px-3 py-1.5 rounded-2xl hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45 transition-colors cursor-pointer font-sans text-[12px] text-on-surface-variant/75 hover:text-primary font-medium"
-                  >
-                    {selectedModel === "鲸杉GEO-Agent 1.8" ? "Auto" : selectedModel}
-                    <ChevronDown className={cn("w-3.5 h-3.5 text-on-surface-variant/50 transition-transform", isModelDropdownOpen && "rotate-180")} />
-                  </motion.button>
-                  
-                  <AnimatePresence>
-                    {isModelDropdownOpen && (
-                      <motion.div 
-                        initial={{ opacity: 0, scale: 0.95, y: -5 }}
-                        animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.95, y: -5 }}
-                        transition={{ duration: 0.12 }}
-                        className="absolute bottom-full right-0 mb-2 w-48 bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl  overflow-hidden flex flex-col py-1.5 z-50"
-                      >
-                        {models.map(model => (
-                          <button
-                            key={model}
-                            onClick={() => {
-                              setSelectedModel(model);
-                              setIsModelDropdownOpen(false);
-                            }}
-                            className={cn(
-                              "px-4 py-2 text-left font-mono text-[11px] uppercase tracking-wider transition-colors",
-                              selectedModel === model 
-                                ? "bg-secondary/10 text-secondary font-bold" 
-                                : "text-on-surface hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45 hover:text-primary font-medium"
-                            )}
-                          >
-                            {model}
-                          </button>
-                        ))}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
+          ))}
 
-                {/* Microphone / Voice button */}
-                <motion.button 
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="w-8 h-8 rounded-full flex items-center justify-center text-on-surface-variant/70 hover:text-primary hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45 transition-colors" 
-                  title="语音输入"
-                >
-                  <Mic className="w-4 h-4" />
-                </motion.button>
+        </ConversationContent>
+        <ConversationScrollButton className="bottom-6 border-outline-variant bg-surface-container-lowest text-on-surface-variant hover:bg-surface-container" />
+      </Conversation>
 
-                {/* Circular Send Arrow button */}
-                <motion.button 
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="w-8 h-8 rounded-full bg-surface-container-high/60 text-on-surface-variant hover:text-primary hover:bg-surface-container-high flex items-center justify-center transition-all" 
-                  title="发送"
+      <div ref={inputShellRef} className="shrink-0 bg-gradient-to-t from-background via-background to-transparent px-lg pb-8 pt-4">
+        <PromptInput
+        className={cn(
+          'relative mx-auto max-w-4xl',
+          '[&_[data-slot=input-group]]:h-auto [&_[data-slot=input-group]]:flex-col [&_[data-slot=input-group]]:items-stretch',
+            '[&_[data-slot=input-group]]:!overflow-visible',
+            '[&_[data-slot=input-group]]:rounded-[28px] [&_[data-slot=input-group]]:border-[#b9b6af]',
+            '[&_[data-slot=input-group]]:bg-[#fffefa] [&_[data-slot=input-group]]:p-4 [&_[data-slot=input-group]]:pb-3',
+            '[&_[data-slot=input-group]]:shadow-[0_12px_38px_rgba(0,0,0,0.09)]',
+            '[&_[data-slot=input-group]]:focus-within:border-[#9fcaf6] [&_[data-slot=input-group]]:focus-within:ring-2 [&_[data-slot=input-group]]:focus-within:ring-[#8fc6ff]/20',
+            isSending && '[&_[data-slot=input-group]]:bg-[#f3f2ee] [&_[data-slot=input-group]]:border-[#d7d4ce]',
+            'dark:[&_[data-slot=input-group]]:border-[#444444] dark:[&_[data-slot=input-group]]:bg-[#1b1b1b] dark:[&_[data-slot=input-group]]:shadow-none',
+            'dark:[&_[data-slot=input-group]]:focus-within:border-[#4d4d4d] dark:[&_[data-slot=input-group]]:focus-within:ring-white/10',
+            isSending && 'dark:[&_[data-slot=input-group]]:bg-[#232323] dark:[&_[data-slot=input-group]]:border-[#373737]'
+          )}
+          accept={KNOWLEDGE_ATTACHMENT_ACCEPT}
+          multiple
+          onError={(error) => {
+            setMessages((current) => [
+              ...current,
+              {
+                id: `assistant-upload-error-${Date.now()}`,
+                role: 'assistant',
+                content: error.code === 'accept'
+                  ? '当前仅支持上传 Markdown、TXT、PDF、Word 文档。'
+                  : error.message,
+                status: 'error',
+              },
+            ]);
+          }}
+          onSubmit={(message) => sendMessage(message.text, message.files)}
+        >
+          {selectedSkill && (
+            <div className="mb-3 flex items-center px-1">
+              <div className="inline-flex max-w-full items-center gap-2 rounded-full bg-[#e9f6f3] px-3 py-1.5 text-[#0b8f84] ring-1 ring-[#b7ded7] dark:bg-[#123733] dark:text-[#67d6ca] dark:ring-[#245c56]">
+                <Library className="size-3.5 shrink-0 stroke-[2.2]" />
+                <span className="truncate text-[14px] font-semibold">{selectedSkill.name}</span>
+                <button
+                  className="ml-0.5 grid size-5 shrink-0 place-items-center rounded-full text-[#0b8f84]/70 transition-colors hover:bg-[#cfece6] hover:text-[#08766d] dark:text-[#67d6ca]/75 dark:hover:bg-[#1e4b45] dark:hover:text-[#8af0e4]"
+                  onClick={() => setSelectedSkill(null)}
+                  title="移除技能"
+                  type="button"
                 >
-                  <ArrowUp className="w-4 h-4" />
-                </motion.button>
+                  <X className="size-3" />
+                </button>
               </div>
             </div>
-          </div>
-          
-          <div className="text-center mt-4">
-            <span className="font-mono text-[10px] text-on-surface-variant/50 tracking-widest uppercase font-bold">
-              鲸杉GEO-Agent Studio • 安全处理空间数据
-            </span>
-          </div>
+          )}
+          <AttachmentList />
+          <PromptInputTextarea
+            value={inputValue}
+            onChange={(event) => setInputValue(event.currentTarget.value)}
+            onFocus={() => {
+              setIsModelDropdownOpen(false);
+              setIsOptionsOpen(false);
+              setIsSkillsOpen(false);
+            }}
+            className="min-h-[50px] max-h-[160px] w-full resize-none border-none bg-transparent px-2 py-1 text-[15px] leading-relaxed text-[#252525] shadow-none outline-none placeholder:text-[#85817b] focus-visible:ring-0 dark:text-[#f1f1f1] dark:placeholder:text-[#9d9d9d]"
+            placeholder={getSkillPlaceholder(selectedSkill)}
+          />
+
+          <PromptInputFooter className="mt-3 flex items-center justify-between border-t border-outline-variant/5 pt-1">
+            <PromptInputTools className="relative flex items-center gap-1">
+              <AttachmentButton />
+              <PromptInputButton
+                className="size-7 rounded-full text-[#6f6b64] hover:bg-[#eeeeeb] hover:text-[#34322e] dark:text-[#b6b6b6] dark:hover:bg-[#2d2d2d] dark:hover:text-[#f1f1f1]"
+                onClick={() => {
+                  setIsModelDropdownOpen(false);
+                  setIsOptionsOpen(false);
+                  setIsSkillsOpen((current) => !current);
+                }}
+                tooltip="选择技能"
+              >
+                <Library className="size-3.5 stroke-[2.2]" />
+              </PromptInputButton>
+              <PromptInputButton
+                className="size-7 rounded-full text-[#6f6b64] hover:bg-[#eeeeeb] hover:text-[#34322e] dark:text-[#b6b6b6] dark:hover:bg-[#2d2d2d] dark:hover:text-[#f1f1f1]"
+                onClick={() => {
+                  setIsModelDropdownOpen(false);
+                  setIsSkillsOpen(false);
+                  setIsOptionsOpen((current) => !current);
+                }}
+                tooltip="配置选项"
+              >
+                <SlidersHorizontal className="size-3.5 stroke-[2.2]" />
+              </PromptInputButton>
+
+              <AnimatePresence>
+                {isSkillsOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.96, y: 8 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.96, y: 8 }}
+                    transition={{ duration: 0.12 }}
+                    className="absolute bottom-full left-0 z-50 mb-2 max-h-[320px] w-[280px] max-w-[calc(100vw-48px)] overflow-y-auto overscroll-contain rounded-xl border border-[#c9c3b8] !bg-[#f7f4ee] p-1.5 text-[#26231f] opacity-100 shadow-[0_18px_44px_rgba(40,34,26,0.22)] backdrop-blur-none dark:border-[#5a5a5a] dark:!bg-[#2a2a2a] dark:text-[#f4f4f4]"
+                  >
+                    <div className="px-2.5 pb-1 pt-1 text-[12px] font-semibold text-[#6c6258] dark:text-[#bdbdbd]">
+                      Skills
+                    </div>
+                    {skills.length > 0 ? (
+                      skills.map((skill) => (
+                        <button
+                          className="flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-[#ebe5dc] dark:hover:bg-[#3a3a3a]"
+                          key={skill.id}
+                          onClick={() => selectSkill(skill)}
+                          type="button"
+                        >
+                          <Sparkles className="mt-0.5 size-3.5 shrink-0 text-secondary" />
+                          <span className="min-w-0">
+                            <span className="block truncate text-[13px] font-semibold text-[#26231f] dark:text-[#f8f8f8]">
+                              {skill.name}
+                            </span>
+                            <span className="mt-0.5 line-clamp-2 block text-[11px] leading-relaxed text-[#756b60] dark:text-[#d0d0d0]">
+                              {skill.description || '本地技能'}
+                            </span>
+                          </span>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="px-2.5 py-3 text-[12px] leading-relaxed text-[#756b60] dark:text-[#d0d0d0]">
+                        未发现本地技能。请检查项目 `.skills/` 目录。
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+                {isOptionsOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.96, y: 8 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.96, y: 8 }}
+                    transition={{ duration: 0.12 }}
+                    className="absolute bottom-full left-0 z-50 mb-2 w-[252px] max-w-[calc(100vw-48px)] rounded-xl border border-[#c9c3b8] !bg-[#f7f4ee] p-1.5 text-[#26231f] opacity-100 shadow-[0_18px_44px_rgba(40,34,26,0.22)] backdrop-blur-none dark:border-[#5a5a5a] dark:!bg-[#2a2a2a] dark:text-[#f4f4f4]"
+                  >
+                    <OptionToggle
+                      checked={deepThinking}
+                      disabled={!selectedCapability.supportsDeepThinking}
+                      icon={Brain}
+                      label="深度思考"
+                      title={selectedCapability.supportsDeepThinking ? '切换深度思考' : '当前模型不支持深度思考'}
+                      onChange={() => {
+                        setDeepThinking((current) => !current);
+                      }}
+                    />
+                    <OptionToggle
+                      checked={webSearch}
+                      disabled={!selectedCapability.supportsWebSearch}
+                      icon={Search}
+                      label="联网搜索"
+                      title={selectedCapability.supportsWebSearch ? '切换联网搜索' : '当前模型不支持联网搜索'}
+                      onChange={() => {
+                        setWebSearch((current) => !current);
+                      }}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </PromptInputTools>
+
+            <div className="flex items-center gap-2.5">
+              <div className="relative">
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => {
+                    setIsSkillsOpen(false);
+                    setIsOptionsOpen(false);
+                    setIsModelDropdownOpen(!isModelDropdownOpen);
+                  }}
+                  className="flex cursor-pointer items-center gap-1 rounded-2xl bg-transparent px-2.5 py-1 font-sans text-[11px] font-semibold text-[#6f6b64] transition-colors hover:bg-[#eeeeeb] hover:text-[#34322e] dark:text-[#b6b6b6] dark:hover:bg-[#2d2d2d] dark:hover:text-[#f1f1f1]"
+                  type="button"
+                >
+                  {selectedCapability.shortLabel}
+                  <ChevronDown className={cn('size-3 transition-transform', isModelDropdownOpen && 'rotate-180')} />
+                </motion.button>
+
+                <AnimatePresence>
+                  {isModelDropdownOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95, y: -5 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.95, y: -5 }}
+                      transition={{ duration: 0.12 }}
+                      className="absolute right-0 bottom-full z-50 mb-2 max-h-[300px] w-[276px] max-w-[calc(100vw-48px)] overflow-y-auto rounded-xl border border-[#c9c3b8] !bg-[#f7f4ee] p-1.5 text-[#26231f] opacity-100 shadow-[0_18px_44px_rgba(40,34,26,0.24)] backdrop-blur-none dark:border-[#5a5a5a] dark:!bg-[#2a2a2a] dark:text-[#f4f4f4]"
+                    >
+                      <div className="flex items-center gap-2 px-2.5 pb-1 pt-1 text-[12px] font-semibold text-[#6c6258] dark:text-[#bdbdbd]">
+                        <span>Select a model</span>
+                        <span className="rounded-md bg-[#e7e1d8] px-1.5 py-0.5 text-[10px] text-[#756b60] dark:bg-[#3b3b3b] dark:text-[#d0d0d0]">
+                          Beta
+                        </span>
+                      </div>
+                      {MODEL_CAPABILITIES.map((model) => (
+                        <button
+                          key={model.label}
+                          onClick={() => {
+                            setSelectedModel(model.label);
+                            setIsModelDropdownOpen(false);
+                            setIsOptionsOpen(false);
+                          }}
+                          className={cn(
+                            'flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium transition-colors',
+                            selectedModel === model.label
+                              ? 'bg-[#ebe5dc] text-[#26231f] dark:bg-[#3a3a3a] dark:text-[#f8f8f8]'
+                              : 'text-[#3f3932] hover:bg-[#ebe5dc] dark:text-[#f0f0f0] dark:hover:bg-[#3a3a3a]'
+                          )}
+                          type="button"
+                        >
+                          <span className="flex min-w-0 items-center gap-3">
+                            <ModelIcon model={model} />
+                            <span className="truncate">{model.label}</span>
+                          </span>
+                          {selectedModel === model.label && <Check className="size-3.5 shrink-0" />}
+                        </button>
+                      ))}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <PromptInputButton
+                className="size-7 rounded-full text-[#6f6b64] hover:bg-[#eeeeeb] hover:text-[#34322e] dark:text-[#b6b6b6] dark:hover:bg-[#2d2d2d] dark:hover:text-[#f1f1f1]"
+                tooltip="语音输入"
+              >
+                <Mic className="size-3.5 stroke-[2.2]" />
+              </PromptInputButton>
+
+              <AttachmentAwareSubmit
+                inputValue={inputValue}
+                isSending={isSending}
+                selectedSkill={selectedSkill}
+              />
+            </div>
+          </PromptInputFooter>
+        </PromptInput>
+
+        <div className="mt-4 text-center">
+          <span className="font-mono text-[10px] font-bold uppercase tracking-widest text-on-surface-variant/50">
+            鲸杉GEO-Agent Studio • 安全处理空间数据
+          </span>
         </div>
       </div>
     </div>
+    </TooltipProvider>
   );
 }
 
-function QuickAction({ icon: Icon, text }: { icon: any, text: string }) {
+const AttachmentButton: React.FC = () => {
+  const attachments = usePromptInputAttachments();
+
   return (
-    <motion.button 
-      whileHover={{ y: -2, scale: 1.02 }}
-      whileTap={{ scale: 0.98 }}
-      className="backdrop-blur-md bg-[#f7f7f5] dark:bg-surface-variant/70 border-transparent bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl px-5 py-3  hover:border-secondary hover: transition-all text-[14px] text-on-surface flex items-center gap-3 cursor-pointer"
+    <PromptInputButton
+      className="size-7 rounded-full text-[#6f6b64] hover:bg-[#eeeeeb] hover:text-[#34322e] dark:text-[#b6b6b6] dark:hover:bg-[#2d2d2d] dark:hover:text-[#f1f1f1]"
+      onClick={attachments.openFileDialog}
+      tooltip="上传知识库附件"
     >
-      <Icon className="text-secondary w-5 h-5" />
-      {text}
-    </motion.button>
+      <Plus className="size-4 stroke-[2.2]" />
+    </PromptInputButton>
   );
+};
+
+const AttachmentList: React.FC = () => {
+  const attachments = usePromptInputAttachments();
+
+  if (attachments.files.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mb-3 flex flex-wrap gap-2 px-1">
+      {attachments.files.map((file) => (
+        <div
+          className="inline-flex max-w-full items-center gap-2 rounded-full bg-[#f0eee9] px-3 py-1.5 text-[12px] font-semibold text-[#504a43] ring-1 ring-[#d8d2c8] dark:bg-[#252525] dark:text-[#d8d8d8] dark:ring-[#3a3a3a]"
+          key={file.id}
+        >
+          <FileText className="size-3.5 shrink-0 text-secondary" />
+          <span className="max-w-[220px] truncate">{file.filename || '未命名附件'}</span>
+          <button
+            className="grid size-5 shrink-0 place-items-center rounded-full text-[#6f6b64] transition-colors hover:bg-[#ded8cf] hover:text-[#2f2f2f] dark:text-[#aaa] dark:hover:bg-[#383838] dark:hover:text-white"
+            onClick={() => attachments.remove(file.id)}
+            title="移除附件"
+            type="button"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const AttachmentAwareSubmit: React.FC<{
+  inputValue: string;
+  isSending: boolean;
+  selectedSkill: GeoAgentSkill | null;
+}> = ({ inputValue, isSending, selectedSkill }) => {
+  const attachments = usePromptInputAttachments();
+
+  return (
+    <PromptInputSubmit
+      className="size-7 rounded-full bg-[#2f2f2f] text-white transition-all hover:bg-[#1f1f1f] disabled:bg-[#f3f3f1] disabled:text-[#b5b2ac] disabled:opacity-100 dark:bg-[#f1f1f1] dark:text-[#1b1b1b] dark:hover:bg-white dark:disabled:bg-[#252525] dark:disabled:text-[#666]"
+      disabled={(!inputValue.trim() && !selectedSkill && attachments.files.length === 0) || isSending}
+      status={isSending ? 'submitted' : 'ready'}
+    >
+      <ArrowUp className="size-3.5" />
+    </PromptInputSubmit>
+  );
+};
+
+const ChatBubble: React.FC<{
+  message: ChatMessage;
+  onCancelPhaseTwo: (messageId: string, project: GeoAgentGeoProject, platform?: 'doubao' | 'deepseek') => void;
+  onCancelSupportArticles: (messageId: string) => void;
+  onConfirmDraft: (messageId: string, draft: GeoAgentKnowledgeDraft) => void;
+  onConfirmPhaseTwo: (messageId: string, project: GeoAgentGeoProject, platform?: 'doubao' | 'deepseek') => void;
+  onConfirmArticleDraft: (messageId: string, articleId: string) => void;
+  onConfirmSupportArticles: (messageId: string, discovery: GeoAgentGeoSourceDiscovery) => void;
+  onRejectDraft: (messageId: string, draft: GeoAgentKnowledgeDraft) => void;
+  onRequestSupportArticles: (messageId: string, discovery: GeoAgentGeoSourceDiscovery) => void;
+  onRunArticleDraft: (messageId: string, discovery: GeoAgentGeoSourceDiscovery, articleType: 'consulting' | 'review') => void;
+  onRunSourceDiscovery: (messageId: string, report: GeoAgentGeoReport) => void;
+  workflowState: GeoAgentWorkflowState | null;
+}> = ({ message, onCancelPhaseTwo, onCancelSupportArticles, onConfirmDraft, onConfirmPhaseTwo, onConfirmArticleDraft, onConfirmSupportArticles, onRejectDraft, onRequestSupportArticles, onRunArticleDraft, onRunSourceDiscovery, workflowState }) => {
+  const nextAction = getNextWorkflowAction(workflowState, message);
+  if (message.role === 'user') {
+    return (
+      <Message from="user" className="max-w-[72%]">
+        <MessageContent className="!rounded-[22px] !rounded-tr-[10px] !bg-[#f1f0ee] !px-5 !py-3 text-[15px] leading-relaxed !text-[#2f2f2f] dark:!bg-[#2d2d2d] dark:!text-[#f1f1f1]">
+          {message.content}
+        </MessageContent>
+      </Message>
+    );
+  }
+
+  return (
+    <Message from="assistant" className="max-w-[85%]">
+      {message.reasoning && (
+        <Reasoning className="mb-1" defaultOpen={message.status === 'streaming'}>
+          <ReasoningTrigger className="w-fit rounded-2xl bg-[#f7f7f5] px-4 py-2 text-secondary dark:bg-surface-variant/45">
+            <Brain className="size-4" />
+            <span className="text-[11px] font-bold uppercase tracking-wider">本地后端 • GEO Agent Sidecar</span>
+            <ChevronDown className="size-4 text-on-surface-variant" />
+          </ReasoningTrigger>
+          <ReasoningContent className="rounded-2xl bg-[#f7f7f5] p-4 text-[13px] text-on-surface-variant dark:bg-surface-variant/45">
+            {message.reasoning}
+          </ReasoningContent>
+        </Reasoning>
+      )}
+      <MessageContent className="rounded-2xl rounded-tl-sm bg-[#f7f7f5] p-6 text-[14px] leading-relaxed text-[#2f2f2f] dark:bg-[#242424] dark:text-[#f1f1f1]">
+        {message.reasoningContent && (
+          <AssistantChainOfThought
+            content={message.reasoningContent}
+            isStreaming={message.status === 'streaming'}
+            liveSearchSteps={message.liveSearchSteps ?? []}
+            searchQueries={message.searchQueries ?? []}
+          />
+        )}
+        {((message.sources && message.sources.length > 0) || (message.searchQueries && message.searchQueries.length > 0) || (message.searchActions && message.searchActions.length > 0)) && (
+          <CitationSources
+            searchActions={message.searchActions ?? []}
+            searchQueries={message.searchQueries ?? []}
+            searchUsage={message.searchUsage ?? {}}
+            sources={message.sources ?? []}
+          />
+        )}
+        {message.knowledgeDraft && (
+          <KnowledgeDraftPreview
+            draft={message.knowledgeDraft}
+          />
+        )}
+        {message.phaseTwoPrompt && (
+          <PhaseTwoPromptPreview
+            project={message.phaseTwoPrompt}
+            platform={message.phaseTwoPlatform ?? 'doubao'}
+          />
+        )}
+        {message.phaseTwoExecution && (
+          <PhaseTwoReportRunning execution={message.phaseTwoExecution} />
+        )}
+        {message.geoReport && (
+          <GeoCheckReportCard report={message.geoReport} />
+        )}
+        {message.sourceDiscoveryExecution && (
+          <SourceDiscoveryRunning execution={message.sourceDiscoveryExecution} />
+        )}
+        {message.sourceDiscovery && (
+          <SourceDiscoveryCard discovery={message.sourceDiscovery} />
+        )}
+        {message.articleDraftExecution && (
+          <ArticleDraftRunning execution={message.articleDraftExecution} />
+        )}
+        {message.articleDraft && (
+          <ArticleDraftCard draft={message.articleDraft} />
+        )}
+        {message.supportArticles && (
+          <SupportArticlesCard
+            onConfirmDraft={(articleId) => onConfirmArticleDraft(message.id, articleId)}
+            result={message.supportArticles}
+          />
+        )}
+        {message.status === 'streaming' && !message.content ? (
+          message.phaseTwoExecution || message.sourceDiscoveryExecution || message.articleDraftExecution ? null : <ThinkingIndicator label={message.reasoning ?? '正在思考'} />
+        ) : (
+          <MessageResponse>{message.content}</MessageResponse>
+        )}
+      </MessageContent>
+      {message.knowledgeDraft && message.confirmationState === 'approval-requested' && (
+        <AssistantConfirmationBar
+          approved={message.confirmationApproved}
+          id={message.knowledgeDraft.id}
+          onCancel={() => onRejectDraft(message.id, message.knowledgeDraft!)}
+          onConfirm={() => onConfirmDraft(message.id, message.knowledgeDraft!)}
+          state={message.confirmationState ?? 'approval-requested'}
+          title="确认后将建立企业知识库，并生成本地知识条目与向量索引。"
+          confirmLabel="确认建立知识库"
+          cancelLabel="取消"
+          busy={message.actionBusy}
+        />
+      )}
+      {message.phaseTwoPrompt && message.confirmationState === 'approval-requested' && (
+        <AssistantConfirmationBar
+          approved={message.confirmationApproved}
+          id={message.phaseTwoPrompt.id}
+          onCancel={() => onCancelPhaseTwo(message.id, message.phaseTwoPrompt!, message.phaseTwoPlatform)}
+          onConfirm={() => onConfirmPhaseTwo(message.id, message.phaseTwoPrompt!, message.phaseTwoPlatform)}
+          state={message.confirmationState ?? 'approval-requested'}
+          title={`是否进入阶段二，开始生成${platformLabelFor(message.phaseTwoPlatform ?? 'doubao')}排行榜问题池？`}
+          confirmLabel={`生成${platformLabelFor(message.phaseTwoPlatform ?? 'doubao')}排行榜问题池`}
+          cancelLabel="暂不进入"
+          busy={message.actionBusy}
+        />
+      )}
+      {message.supportArticlesPrompt && message.confirmationState === 'approval-requested' && (
+        <AssistantConfirmationBar
+          approved={message.confirmationApproved}
+          id={message.supportArticlesPrompt.id}
+          onCancel={() => onCancelSupportArticles(message.id)}
+          onConfirm={() => onConfirmSupportArticles(message.id, message.supportArticlesPrompt!)}
+          state={message.confirmationState ?? 'approval-requested'}
+          title={`是否生成${platformLabelFor(message.supportArticlesPrompt.platform === 'deepseek' ? 'deepseek' : 'doubao')}阶段四支撑内容？确认后会同时生成咨询类和测评类草稿。`}
+          confirmLabel="确认生成支撑内容"
+          cancelLabel="暂不生成"
+          busy={message.actionBusy}
+        />
+      )}
+      {nextAction?.type === 'source_discovery' && message.geoReport && (
+        <AssistantActionBar
+          label={nextAction.label}
+          onClick={() => onRunSourceDiscovery(message.id, message.geoReport!)}
+          primaryLabel={nextAction.primaryLabel}
+          busy={message.actionBusy}
+        />
+      )}
+      {nextAction?.type === 'support_articles' && message.sourceDiscovery && (
+        <AssistantActionBar
+          label={nextAction.label}
+          onClick={() => onRequestSupportArticles(message.id, message.sourceDiscovery!)}
+          primaryLabel={nextAction.primaryLabel}
+          busy={message.actionBusy}
+        />
+      )}
+      {nextAction?.type === 'stage_five_waiting' && (
+        <AssistantActionBar
+          disabled
+          label={nextAction.label}
+          primaryLabel={nextAction.primaryLabel}
+        />
+      )}
+    </Message>
+  );
+};
+
+const AssistantChainOfThought: React.FC<{
+  content: string;
+  isStreaming: boolean;
+  liveSearchSteps: Array<{ query: string; status: 'in_progress' | 'completed' }>;
+  searchQueries: string[];
+}> = ({ content, isStreaming, liveSearchSteps, searchQueries }) => (
+  <ChainOfThought className="mb-4 rounded-xl border border-[#e2e0dc] bg-white/55 px-3 py-2.5 dark:border-[#393939] dark:bg-white/[0.03]" defaultOpen={isStreaming}>
+    <ChainOfThoughtHeader className="text-[12px] font-semibold text-[#6b6761] hover:text-[#2f2f2f] dark:text-[#aaa] dark:hover:text-[#f1f1f1]">
+      {isStreaming ? '正在思考' : '思考过程'}
+    </ChainOfThoughtHeader>
+    <ChainOfThoughtContent className="mt-3 space-y-2">
+      {(liveSearchSteps.length > 0 || searchQueries.length > 0) && (
+        <ChainOfThoughtSearchResults>
+          {(liveSearchSteps.length > 0 ? liveSearchSteps.map((step) => step.query) : searchQueries).map((query) => (
+            <ChainOfThoughtSearchResult
+              className="border border-[#dedbd5] bg-[#f7f7f5] text-[#6b6761] dark:border-[#444] dark:bg-[#2a2a2a] dark:text-[#cfcfcf]"
+              key={query}
+            >
+              {query}
+            </ChainOfThoughtSearchResult>
+          ))}
+        </ChainOfThoughtSearchResults>
+      )}
+      {liveSearchSteps.map((step) => (
+        <ChainOfThoughtStep
+          className="text-[#6b6761] dark:text-[#cfcfcf]"
+          key={step.query}
+          label={step.status === 'completed' ? '已完成搜索' : '正在搜索'}
+          status={step.status === 'completed' ? 'complete' : 'active'}
+        >
+          <div className="text-[12px] text-[#86817a] dark:text-[#9a9a9a]">{step.query}</div>
+        </ChainOfThoughtStep>
+      ))}
+      <ChainOfThoughtStep
+        className="text-[#6b6761] dark:text-[#cfcfcf]"
+        icon={Brain}
+        label={isStreaming ? '模型正在组织推理' : '模型思考摘要'}
+        status={isStreaming ? 'active' : 'complete'}
+      >
+        <div className="whitespace-pre-wrap rounded-lg bg-[#f7f7f5] p-3 text-[13px] leading-relaxed text-[#4b4742] dark:bg-[#1f1f1f] dark:text-[#d8d8d8]">
+          {content}
+        </div>
+      </ChainOfThoughtStep>
+    </ChainOfThoughtContent>
+  </ChainOfThought>
+);
+
+const KnowledgeDraftPreview: React.FC<{
+  draft: GeoAgentKnowledgeDraft;
+}> = ({ draft }) => {
+  const profile = draft.profile;
+  const fileNames = draft.assets.map((asset) => asset.filename);
+  const previewLongTail = buildLongTailPreview(profile);
+
+  return (
+    <div className="mb-5 text-[#2f2f2f] dark:text-[#f1f1f1]">
+      <div className="mb-4 flex flex-col gap-1 border-b border-outline-variant/20 pb-3">
+        <div className="flex items-center gap-2 text-[14px] font-bold text-primary">
+          <Database className="size-4 text-secondary" />
+          企业知识库草稿预览
+        </div>
+        <p className="text-[12px] leading-relaxed text-on-surface-variant">
+          这是调度模型按知识库录入技能从资料中抽取的模板。确认前不会写入正式知识库。
+        </p>
+      </div>
+
+      <div className="grid gap-4">
+        {DRAFT_PREVIEW_GROUPS.map((group) => {
+          const visibleFields = group.fields.filter(([field]) => hasProfileValue(profile[field]));
+          if (visibleFields.length === 0) {
+            return null;
+          }
+          return (
+            <section className="border-b border-outline-variant/15 pb-3 last:border-b-0" key={group.title}>
+              <h4 className="mb-2 text-[12px] font-bold text-[#5d574f] dark:text-[#cfcfcf]">
+                {group.title}
+              </h4>
+              <div className="grid gap-2">
+                {visibleFields.map(([field, label]) => (
+                  <div className="grid gap-1" key={field}>
+                    <span className="text-[11px] font-semibold text-[#8a837a] dark:text-[#969696]">{label}</span>
+                    <p className="line-clamp-3 whitespace-pre-wrap text-[13px] leading-relaxed text-[#34312d] dark:text-[#eeeeee]">
+                      {String(profile[field] ?? '')}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+
+      {previewLongTail.length > 0 && (
+        <section className="mt-3 border-b border-outline-variant/15 pb-3">
+          <h4 className="mb-2 text-[12px] font-bold text-[#5d574f] dark:text-[#cfcfcf]">
+            预计生成长尾语义词
+          </h4>
+          <div className="flex flex-wrap gap-2">
+            {previewLongTail.slice(0, 8).map((keyword) => (
+              <span className="rounded-full bg-[#f0eee9] px-2.5 py-1 text-[11px] font-semibold text-[#6b6258] dark:bg-[#2d2d2d] dark:text-[#d4d4d4]" key={keyword}>
+                {keyword}
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {(draft.missing_fields.length > 0 || fileNames.length > 0) && (
+        <div className="mt-3 grid gap-2 text-[12px] text-[#6b6258] dark:text-[#cfcfcf]">
+          {fileNames.length > 0 && (
+            <div className="truncate">
+              <span className="font-bold">来源附件：</span>
+              {fileNames.join('、')}
+            </div>
+          )}
+          {draft.missing_fields.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-bold">待补充字段：</span>
+              {draft.missing_fields.map((field) => (
+                <span className="rounded-full bg-[#f0eee9] px-2.5 py-1 text-[11px] font-semibold text-[#6b6258] dark:bg-[#2d2d2d] dark:text-[#d4d4d4]" key={field}>
+                  {field}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const PhaseTwoPromptPreview: React.FC<{
+  project: GeoAgentGeoProject;
+  platform: 'doubao' | 'deepseek';
+}> = ({ project, platform }) => (
+  <div className="mb-5 border-b border-outline-variant/20 pb-4 text-[#2f2f2f] dark:text-[#f1f1f1]">
+    <div className="mb-3 flex items-center gap-2 text-[14px] font-bold text-primary">
+      <GraduationCap className="size-4 text-secondary" />
+      {platformLabelFor(platform)}阶段二排行榜问题池
+    </div>
+    <div className="grid gap-3 text-[13px] leading-relaxed text-on-surface-variant">
+      <div>
+        <span className="font-bold text-primary">企业：</span>
+        {project.company_name}
+      </div>
+      <div>
+        <span className="font-bold text-primary">初始关键词：</span>
+        {project.initial_keywords.length > 0 ? project.initial_keywords.join('、') : '暂无'}
+      </div>
+      <div>
+        <span className="font-bold text-primary">目标平台：</span>
+        {platformLabelFor(platform)}
+      </div>
+      <p>
+        确认后会基于企业知识库生成 {platformLabelFor(platform)} 平台的用户真实问题池和高优先级排行榜问题，并保存到独立平台状态，不写入企业知识库事实条目。
+      </p>
+    </div>
+  </div>
+);
+
+const PHASE_TWO_REPORT_STEPS = [
+  '读取企业知识库',
+  '提取初始关键词',
+  '生成用户真实问题池',
+  '筛选高优先级排行榜问题',
+  '保存平台问题池结果',
+];
+
+const SOURCE_DISCOVERY_STEPS = [
+  '读取排行榜问题池',
+  '询问目标 AI 推荐信源',
+  '观察真实问题引用线索',
+  '清洗可核验引用证据',
+  '保存平台信源结果',
+];
+
+const ARTICLE_DRAFT_STEPS = [
+  '读取企业事实知识库',
+  '匹配排行榜问题和信源',
+  '生成咨询类支撑文章',
+  '生成测评类支撑文章',
+  '保存阶段四草稿',
+];
+
+const StageExecutionTask: React.FC<{
+  activeStep: number;
+  icon: React.ElementType;
+  steps: string[];
+  subtitle?: string;
+  title: string;
+}> = ({ activeStep, icon: Icon, steps, subtitle, title }) => (
+  <Task className="mb-5 rounded-2xl bg-white/60 p-4 dark:bg-[#1f1f1f]/70" defaultOpen>
+    <TaskTrigger title={title}>
+      <div className="flex w-full cursor-pointer items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-[14px] font-bold text-primary">
+            <Icon className="size-4 text-secondary" />
+            {title}
+          </div>
+          {subtitle && <p className="mt-1 text-[12px] text-on-surface-variant">{subtitle}</p>}
+        </div>
+        <span className="flex shrink-0 gap-1">
+          {[0, 1, 2].map((index) => (
+            <motion.span
+              key={index}
+              className="size-1.5 rounded-full bg-secondary/80"
+              animate={{ opacity: [0.25, 1, 0.25] }}
+              transition={{ duration: 0.9, repeat: Infinity, delay: index * 0.16 }}
+            />
+          ))}
+        </span>
+      </div>
+    </TaskTrigger>
+    <TaskContent className="mt-3">
+      {steps.map((step, index) => {
+        const isActive = index === activeStep;
+        const isDone = index < activeStep;
+        return (
+          <TaskItem
+            className={cn(
+              'flex items-center gap-2 rounded-xl px-3 py-2 text-[12px] transition-colors',
+              isActive && 'bg-[#eef6ff] text-[#1167d8] dark:bg-[#17324d] dark:text-[#9fcfff]',
+              isDone && 'text-[#0b8f84]',
+              !isActive && !isDone && 'text-on-surface-variant/70'
+            )}
+            key={step}
+          >
+            {isDone ? <Check className="size-3.5" /> : <span className={cn('size-2 rounded-full', isActive ? 'bg-secondary' : 'bg-outline-variant')} />}
+            <span className="font-semibold">{step}</span>
+            {isActive && <span className="ml-auto text-[11px]">进行中</span>}
+          </TaskItem>
+        );
+      })}
+    </TaskContent>
+  </Task>
+);
+
+const PhaseTwoReportRunning: React.FC<{
+  execution: NonNullable<ChatMessage['phaseTwoExecution']>;
+}> = ({ execution }) => (
+  <StageExecutionTask
+    activeStep={execution.activeStep}
+    icon={Target}
+    steps={PHASE_TWO_REPORT_STEPS}
+    subtitle={execution.companyName}
+    title={`正在生成${platformLabelFor(execution.platform)}排行榜问题池`}
+  />
+);
+
+const SourceDiscoveryRunning: React.FC<{
+  execution: NonNullable<ChatMessage['sourceDiscoveryExecution']>;
+}> = ({ execution }) => (
+  <StageExecutionTask
+    activeStep={execution.activeStep}
+    icon={Globe}
+    steps={SOURCE_DISCOVERY_STEPS}
+    subtitle="这一步只盘点可核验证据和待验证候选，不生成发布计划。"
+    title={`正在盘点${platformLabelFor(execution.platform)}信源证据`}
+  />
+);
+
+const ArticleDraftRunning: React.FC<{
+  execution: NonNullable<ChatMessage['articleDraftExecution']>;
+}> = ({ execution }) => (
+  <StageExecutionTask
+    activeStep={execution.activeStep}
+    icon={FileText}
+    steps={ARTICLE_DRAFT_STEPS}
+    subtitle="这一步只生成排行榜前置支撑内容，不生成排行榜文章。"
+    title={`正在生成${platformLabelFor(execution.platform)}阶段四支撑内容`}
+  />
+);
+
+const GeoCheckReportCard: React.FC<{ report: GeoAgentGeoReport }> = ({ report }) => {
+  if (report.status === 'failed') {
+    return (
+      <div className="mb-5 rounded-2xl bg-red-50 p-4 text-[13px] text-red-700 dark:bg-red-950/30 dark:text-red-200">
+        {report.error_message || '阶段二报告生成失败'}
+      </div>
+    );
+  }
+  const platformLabel = platformLabelFor(report.platform === 'deepseek' ? 'deepseek' : 'doubao');
+  const rankingQuestions = report.report.ranking_questions ?? [];
+  return (
+    <div className="mb-5 space-y-4 border-b border-outline-variant/20 pb-5">
+      <div>
+        <div className="flex items-center gap-2 text-[14px] font-bold text-primary">
+          <Target className="size-4 text-secondary" />
+          {platformLabel} 阶段二结果：排行榜问题池
+        </div>
+        <p className="mt-2 text-[13px] leading-relaxed text-on-surface-variant">{report.report.summary || '已生成阶段二排行榜问题池。'}</p>
+      </div>
+      <div className="rounded-2xl bg-[#eef6ff] p-4 text-[13px] leading-relaxed text-[#174d88] dark:bg-[#17324d] dark:text-[#c9e4ff]">
+        <div className="font-bold">第二步主要做什么？</div>
+        <p className="mt-1">
+          它不是写文章，也不是发稿；它是在当前平台上确定“用户会问哪些排行榜/推荐类问题”，并选出后续最值得优先做内容的题目。
+        </p>
+      </div>
+      <ReportSection
+        title="本阶段重点：优先做这几个排行榜题目"
+        items={rankingQuestions}
+        limit={3}
+        variant="strong"
+      />
+      <details className="rounded-2xl bg-white/50 p-3 text-[12px] dark:bg-[#1f1f1f]/70">
+        <summary className="cursor-pointer font-bold text-primary">查看完整问题池</summary>
+        <div className="mt-3">
+          <ReportSection title="用户真实问题池" items={report.report.question_pool ?? []} limit={8} compact />
+        </div>
+      </details>
+    </div>
+  );
+};
+
+const SourceDiscoveryCard: React.FC<{ discovery: GeoAgentGeoSourceDiscovery }> = ({ discovery }) => {
+  const platformLabel = platformLabelFor(discovery.platform === 'deepseek' ? 'deepseek' : 'doubao');
+  const verifiedSources = (discovery.discovery.verified_observed_sources ?? discovery.discovery.observed_citation_sources ?? []) as unknown[];
+  const candidateSources = (discovery.discovery.candidate_sources ?? discovery.discovery.ai_recommended_sources ?? []) as unknown[];
+  if (discovery.discovery.status === 'failed') {
+    return (
+      <div className="mb-5 rounded-2xl bg-red-50 p-4 text-[13px] text-red-700 dark:bg-red-950/30 dark:text-red-200">
+        {discovery.discovery.summary || '高权重信源发现失败'}
+      </div>
+    );
+  }
+  return (
+    <div className="mb-5 space-y-4 border-b border-outline-variant/20 pb-5">
+      <div>
+        <div className="flex items-center gap-2 text-[14px] font-bold text-primary">
+          <Globe className="size-4 text-secondary" />
+          {platformLabel} 阶段三结果：信源证据盘点
+        </div>
+        <p className="mt-2 text-[13px] leading-relaxed text-on-surface-variant">
+          {discovery.discovery.summary || '已完成信源证据盘点。'}
+        </p>
+      </div>
+      <div className="rounded-2xl bg-[#eef6ff] p-4 text-[13px] leading-relaxed text-[#174d88] dark:bg-[#17324d] dark:text-[#c9e4ff]">
+        <div className="font-bold">第三步主要做什么？</div>
+        <p className="mt-1">
+          它不是写文章，也不是发布计划；它是在盘点哪些来源已有可核验证据，哪些信源还只是待验证候选。
+        </p>
+      </div>
+      {verifiedSources.length > 0 ? (
+        <ReportSection title="已验证引用来源" items={verifiedSources} limit={5} variant="strong" />
+      ) : (
+        <div className="rounded-xl bg-[#f7f7f5] px-3 py-2 text-[12px] leading-relaxed text-on-surface-variant dark:bg-[#2a2a2a]">
+          暂无可核验引用来源，需在联网检索或目标 AI 引用结果中补充 URL 后再作为实测信源。
+        </div>
+      )}
+      <ReportSection
+        title="待验证候选信源"
+        items={candidateSources}
+        limit={5}
+        compact
+      />
+      <ReportSection
+        title="综合证据评分"
+        items={discovery.discovery.source_scores ?? []}
+        limit={5}
+        compact
+      />
+      <details className="rounded-2xl bg-white/50 p-3 text-[12px] dark:bg-[#1f1f1f]/70">
+        <summary className="cursor-pointer font-bold text-primary">查看信源发现依据</summary>
+        <div className="mt-3 grid gap-4">
+          <ReportSection title="AI 推荐候选" items={discovery.discovery.ai_recommended_sources ?? []} limit={8} compact />
+          {(discovery.discovery.missing_evidence ?? []).length > 0 && (
+            <ReportSection title="待验证证据" items={discovery.discovery.missing_evidence ?? []} limit={8} compact />
+          )}
+        </div>
+      </details>
+    </div>
+  );
+};
+
+const ArticleDraftCard: React.FC<{ draft: GeoAgentGeoArticleDraft }> = ({ draft }) => {
+  const typeLabel = articleTypeLabelFor(draft.article_type === 'review' ? 'review' : 'consulting');
+  if (draft.status === 'failed') {
+    return (
+      <div className="mb-5 rounded-2xl bg-red-50 p-4 text-[13px] text-red-700 dark:bg-red-950/30 dark:text-red-200">
+        {draft.draft.error_message || `${typeLabel}支撑文章生成失败`}
+      </div>
+    );
+  }
+  return (
+    <div className="mb-5 space-y-4 border-b border-outline-variant/20 pb-5">
+      <div>
+        <div className="flex items-center gap-2 text-[14px] font-bold text-primary">
+          <FileText className="size-4 text-secondary" />
+          阶段四结果：{typeLabel}支撑文章
+        </div>
+        <p className="mt-2 text-[13px] leading-relaxed text-on-surface-variant">
+          {draft.draft.title || '已生成支撑文章草稿。'}
+        </p>
+      </div>
+      <div className="grid gap-2 rounded-2xl bg-white/60 p-4 text-[12px] leading-relaxed text-on-surface-variant dark:bg-[#1f1f1f]/70">
+        <div><span className="font-bold text-primary">目标问题：</span>{draft.draft.target_question || '未指定'}</div>
+        <div><span className="font-bold text-primary">建议渠道：</span>{draft.draft.publish_target || '待根据信源确认'}</div>
+      </div>
+      <ReportSection title="文章大纲" items={draft.draft.outline ?? []} limit={8} />
+      <ReportSection title="使用的企业事实" items={draft.draft.facts_used ?? []} limit={5} />
+      <ReportSection title="建议引用信源" items={draft.draft.sources_to_reference ?? []} limit={5} />
+      {(draft.draft.missing_facts ?? []).length > 0 && (
+        <ReportSection title="仍需补充事实" items={draft.draft.missing_facts ?? []} limit={5} />
+      )}
+      <details className="rounded-2xl bg-white/50 p-3 text-[12px] dark:bg-[#1f1f1f]/70">
+        <summary className="cursor-pointer font-bold text-primary">查看完整草稿</summary>
+        <div className="mt-3 max-h-[420px] overflow-y-auto whitespace-pre-wrap rounded-xl bg-[#faf9f7] p-4 leading-relaxed text-[#2f2f2f] dark:bg-[#161616] dark:text-[#f1f1f1]">
+          {draft.draft.content || '暂无正文'}
+        </div>
+      </details>
+    </div>
+  );
+};
+
+const SupportArticlesCard: React.FC<{
+  result: GeoAgentGeoSupportArticleRunResponse;
+  onConfirmDraft: (articleId: string) => void;
+}> = ({ onConfirmDraft, result }) => (
+  <div className="mb-5 space-y-4 border-b border-outline-variant/20 pb-5">
+    <div>
+      <div className="flex items-center gap-2 text-[14px] font-bold text-primary">
+        <FileText className="size-4 text-secondary" />
+        阶段四结果：咨询/测评支撑内容
+      </div>
+      <p className="mt-2 text-[13px] leading-relaxed text-on-surface-variant">
+        已生成排行榜文章的前置支撑草稿。本阶段只产出支撑内容，不生成排行榜文章。
+      </p>
+    </div>
+    <div className="grid gap-3 md:grid-cols-2">
+      <SupportArticleSummaryCard draft={result.consulting_draft ?? null} label="咨询类支撑文章" onConfirmDraft={onConfirmDraft} />
+      <SupportArticleSummaryCard draft={result.review_draft ?? null} label="测评类支撑文章" onConfirmDraft={onConfirmDraft} />
+    </div>
+    {result.error_message && (
+      <div className="rounded-2xl bg-red-50 p-4 text-[13px] text-red-700 dark:bg-red-950/30 dark:text-red-200">
+        {result.error_message}
+      </div>
+    )}
+  </div>
+);
+
+const SupportArticleSummaryCard: React.FC<{
+  draft: GeoAgentGeoArticleDraft | null;
+  label: string;
+  onConfirmDraft: (articleId: string) => void;
+}> = ({ draft, label, onConfirmDraft }) => (
+  <div className="rounded-2xl bg-white/60 p-4 text-[12px] leading-relaxed text-on-surface-variant dark:bg-[#1f1f1f]/70">
+    <div className="mb-2 flex items-center justify-between gap-2">
+      <span className="font-bold text-primary">{label}</span>
+      {draft && draft.status !== 'failed' && (
+        <span className={cn(
+          'rounded-full px-2 py-0.5 text-[10px] font-bold',
+          draft.status === 'confirmed'
+            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200'
+            : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-200'
+        )}>
+          {draft.status === 'confirmed' ? '已确认' : '待确认'}
+        </span>
+      )}
+    </div>
+    {!draft ? (
+      <div>暂未生成</div>
+    ) : draft.status === 'failed' ? (
+      <div className="text-red-600 dark:text-red-300">{draft.draft.error_message || '生成失败'}</div>
+    ) : (
+      <div className="space-y-2">
+        <div className="font-semibold text-[#2f2f2f] dark:text-[#f1f1f1]">{draft.draft.title || '未命名草稿'}</div>
+        <div><span className="font-bold">目标问题：</span>{draft.draft.target_question || '未指定'}</div>
+        <details>
+          <summary className="cursor-pointer font-bold text-primary">查看正文</summary>
+          <div className="mt-2 max-h-[260px] overflow-y-auto whitespace-pre-wrap rounded-xl bg-[#faf9f7] p-3 dark:bg-[#161616]">
+            {draft.draft.content || '暂无正文'}
+          </div>
+        </details>
+        {draft.status !== 'confirmed' && (
+          <div className="flex justify-end pt-1">
+            <div className="-mt-2">
+              <AssistantWorkflowActionBar
+                confirmLabel="确认此草稿"
+                id={draft.id}
+                onConfirm={() => onConfirmDraft(draft.id)}
+                state="approval-requested"
+                title="确认后此草稿可作为阶段五输入。"
+                variant="action"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+);
+
+const ReportSection: React.FC<{
+  title: string;
+  items: unknown[];
+  limit?: number;
+  compact?: boolean;
+  variant?: 'default' | 'strong';
+}> = ({ title, items, limit = 5, compact = false, variant = 'default' }) => (
+  <div>
+    <h4 className="mb-2 text-[12px] font-bold uppercase tracking-wider text-primary">{title}</h4>
+    <div className="grid gap-2">
+      {(items.length ? items : ['暂无']).slice(0, limit).map((item, index) => (
+        <div
+          className={cn(
+            'rounded-xl px-3 py-2 text-[12px] leading-relaxed dark:bg-[#1f1f1f]',
+            variant === 'strong'
+              ? 'bg-[#f7f4ee] text-[#2f2f2f] dark:text-[#f1f1f1]'
+              : 'bg-white/60 text-on-surface-variant',
+            compact && 'py-1.5'
+          )}
+          key={`${title}-${index}`}
+        >
+          {formatReportItem(item, compact)}
+        </div>
+      ))}
+    </div>
+  </div>
+);
+
+const AssistantActionBar: React.FC<{
+  disabled?: boolean;
+  label: string;
+  onClick?: () => void;
+  primaryLabel: string;
+  busy?: boolean;
+}> = ({ disabled = false, label, onClick, primaryLabel, busy = false }) => (
+  <AssistantWorkflowActionBar
+    busy={busy}
+    cancelLabel=""
+    confirmLabel={primaryLabel}
+    disabled={disabled}
+    id={`action-${primaryLabel}`}
+    onConfirm={onClick}
+    state="approval-requested"
+    title={label}
+    variant="action"
+  />
+);
+
+const AssistantConfirmationBar: React.FC<{
+  approved?: boolean;
+  cancelLabel: string;
+  confirmLabel: string;
+  id: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+  state: 'approval-requested' | 'approval-responded' | 'output-available';
+  title: string;
+  busy?: boolean;
+}> = ({ approved, cancelLabel, confirmLabel, id, onCancel, onConfirm, state, title, busy = false }) => (
+  <AssistantWorkflowActionBar
+    approved={approved}
+    busy={busy}
+    cancelLabel={cancelLabel}
+    confirmLabel={confirmLabel}
+    id={id}
+    onCancel={onCancel}
+    onConfirm={onConfirm}
+    state={state}
+    title={title}
+  />
+);
+
+const workflowPrimaryClass = 'rounded-2xl bg-secondary px-5 py-2 text-[13px] font-bold text-on-secondary hover:opacity-90 disabled:cursor-wait disabled:opacity-70';
+const workflowSecondaryClass = 'rounded-2xl border border-outline-variant/50 bg-white px-5 py-2 text-[13px] font-bold text-primary hover:bg-surface-container disabled:cursor-not-allowed disabled:opacity-60 dark:bg-[#1f1f1f]';
+
+const AssistantWorkflowActionBar: React.FC<{
+  approved?: boolean;
+  busy?: boolean;
+  cancelLabel?: string;
+  confirmLabel: string;
+  disabled?: boolean;
+  id: string;
+  onCancel?: () => void;
+  onConfirm?: () => void;
+  state: 'approval-requested' | 'approval-responded' | 'output-available';
+  title: string;
+  variant?: 'confirmation' | 'action';
+}> = ({
+  approved,
+  busy = false,
+  cancelLabel,
+  confirmLabel,
+  disabled = false,
+  id,
+  onCancel,
+  onConfirm,
+  state,
+  title,
+  variant = 'confirmation',
+}) => (
+  <MessageActions className="ml-auto mt-2 justify-end">
+    <Confirmation
+      approval={approved === undefined ? { id } : { id, approved }}
+      className="w-fit border-0 bg-transparent p-0 shadow-none"
+      state={state}
+    >
+      <ConfirmationRequest>
+        <div className="flex flex-col items-end gap-2">
+          <ConfirmationTitle className="max-w-[520px] text-right text-[12px] text-[#6b6258] dark:text-[#cfcfcf]">
+            {title}
+          </ConfirmationTitle>
+          <ConfirmationActions className="justify-end gap-2">
+            <ConfirmationAction
+              className={cn(workflowPrimaryClass, disabled && 'cursor-default border border-outline-variant/60 bg-transparent text-on-surface-variant hover:opacity-100')}
+              disabled={busy || disabled}
+              onClick={onConfirm}
+            >
+              {busy ? '执行中...' : confirmLabel}
+            </ConfirmationAction>
+            {variant === 'confirmation' && cancelLabel && (
+              <ConfirmationAction
+                className={workflowSecondaryClass}
+                disabled={busy}
+                onClick={onCancel}
+              >
+                {cancelLabel}
+              </ConfirmationAction>
+            )}
+          </ConfirmationActions>
+        </div>
+      </ConfirmationRequest>
+    </Confirmation>
+  </MessageActions>
+);
+
+const CitationSources: React.FC<{
+  searchActions: SearchAction[];
+  searchQueries: string[];
+  searchUsage: SearchUsage;
+  sources: SourceCitation[];
+}> = ({ searchActions, searchQueries, searchUsage, sources }) => {
+  const displayQueries = searchActions.length > 0
+    ? searchActions.map((action) => action.query).filter((query): query is string => Boolean(query))
+    : searchQueries;
+  const toolCallCount = typeof searchUsage.tool_usage === 'number'
+    ? searchUsage.tool_usage
+    : searchActions.length;
+  const sourceUsageEntries = Object.entries(searchUsage.tool_usage_details ?? {});
+  const hasSearchTrace = displayQueries.length > 0 || searchActions.length > 0 || toolCallCount > 0;
+
+  return (
+    <Sources className="mb-5 text-[#1167d8] dark:text-[#7db4ff]" defaultOpen>
+      <SourcesTrigger
+        className="w-fit rounded-full px-0 text-[13px] font-medium text-[#6f7782] transition-colors hover:text-[#1167d8] dark:text-[#aab0b8] dark:hover:text-[#7db4ff]"
+        count={sources.length}
+      >
+        <span>
+          {displayQueries.length > 0 && `搜索 ${displayQueries.length} 个关键词`}
+          {toolCallCount > 0 && `${displayQueries.length > 0 ? '，' : ''}调用 ${toolCallCount} 次`}
+          {(displayQueries.length > 0 || toolCallCount > 0) && sources.length > 0 && '，'}
+          {sources.length > 0 ? `参考 ${sources.length} 篇资料` : '暂无可点击来源'}
+        </span>
+        <ChevronDown className="size-4" />
+      </SourcesTrigger>
+      <SourcesContent className="mt-3 w-full max-w-full gap-2">
+        {sourceUsageEntries.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {sourceUsageEntries.map(([sourceName, value]) => (
+              <span
+                className="rounded-full bg-[#e6eef8] px-2.5 py-1 text-[12px] font-medium text-[#53606d] dark:bg-[#303640] dark:text-[#c9d4e2]"
+                key={sourceName}
+              >
+                {sourceName}: {formatUsageValue(value)}
+              </span>
+            ))}
+          </div>
+        )}
+        {searchActions.length > 0 ? (
+          <div className="mb-2 space-y-2">
+            {searchActions.map((action, index) => (
+              <div
+                className="rounded-xl border border-[#d7dee8] bg-[#eef4fb] px-3 py-2 text-[12px] text-[#53606d] dark:border-[#3c4654] dark:bg-[#303640] dark:text-[#c9d4e2]"
+                key={`${action.query ?? 'search'}-${index}`}
+              >
+                <div className="font-semibold text-[#26313d] dark:text-[#f4f7fb]">
+                  {action.query || `搜索动作 ${index + 1}`}
+                </div>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {action.type && <span>动作：{action.type}</span>}
+                  {action.sources && action.sources.length > 0 && (
+                    <span>来源：{action.sources.join('、')}</span>
+                  )}
+                  {typeof action.max_keyword === 'number' && (
+                    <span>关键词上限：{action.max_keyword}</span>
+                  )}
+                  {typeof action.limit === 'number' && (
+                    <span>结果上限：{action.limit}</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : searchQueries.length > 0 && (
+          <div className="mb-1 flex flex-wrap gap-2">
+            {searchQueries.map((query) => (
+              <span
+                className="rounded-full bg-[#e6eef8] px-2.5 py-1 text-[12px] font-medium text-[#53606d] dark:bg-[#303640] dark:text-[#c9d4e2]"
+                key={query}
+              >
+                {query}
+              </span>
+            ))}
+          </div>
+        )}
+        {hasSearchTrace && sources.length > 0 && sources.length < 5 && (
+          <div className="mb-2 rounded-lg border border-[#ead8a7] bg-[#fff8df] px-3 py-2 text-[12px] text-[#7a5b13] dark:border-[#6f5d2b] dark:bg-[#3a321e] dark:text-[#e6cf85]">
+            本次豆包返回的可点击引用来源较少；系统只展示 API 返回的结构化引用，不伪造来源。
+          </div>
+        )}
+        {sources.map((source, index) => (
+          <Source
+            className="group flex max-w-full items-start gap-2 rounded-lg px-0 py-1 text-[14px] leading-relaxed text-[#0969da] transition-colors hover:text-[#064f9f] dark:text-[#7db4ff] dark:hover:text-[#a9ccff]"
+            href={source.url}
+            key={`${source.url}-${index}`}
+            title={source.title}
+          >
+            <SourceIcon source={source} />
+            <span className="min-w-0 flex-1">
+              <span className="block break-words underline-offset-4 group-hover:underline">
+                {source.title}
+              </span>
+              <span className="mt-0.5 block break-all text-[12px] text-[#6f7782] group-hover:text-[#53606d] dark:text-[#aab0b8] dark:group-hover:text-[#c7d0dc]">
+                {getHostname(source.url)}
+              </span>
+            </span>
+          </Source>
+        ))}
+      </SourcesContent>
+    </Sources>
+  );
+};
+
+const SourceIcon: React.FC<{ source: SourceCitation }> = ({ source }) => {
+  if (source.logo_url) {
+    return (
+      <img
+        alt=""
+        className="size-4 shrink-0 rounded-sm"
+        src={source.logo_url}
+      />
+    );
+  }
+
+  const hostname = getHostname(source.url);
+  return (
+    <span className="mt-0.5 grid size-4 shrink-0 place-items-center rounded-full bg-[#e6eef8] text-[9px] font-bold text-[#4f6178] dark:bg-[#303640] dark:text-[#c9d4e2]">
+      {hostname.slice(0, 1).toUpperCase()}
+    </span>
+  );
+};
+
+const getHostname = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+};
+
+const formatUsageValue = (value: unknown) => {
+  if (typeof value === 'number' || typeof value === 'string') {
+    return value;
+  }
+  if (value && typeof value === 'object') {
+    const count = (value as { count?: unknown; usage?: unknown; total?: unknown }).count
+      ?? (value as { count?: unknown; usage?: unknown; total?: unknown }).usage
+      ?? (value as { count?: unknown; usage?: unknown; total?: unknown }).total;
+    if (typeof count === 'number' || typeof count === 'string') {
+      return count;
+    }
+  }
+  return '已调用';
+};
+
+const LOCATION_ALIASES: Array<{ city: string; region: string; aliases: string[] }> = [
+  { city: '成都', region: '四川', aliases: ['成都', '成都市'] },
+  { city: '北京', region: '北京', aliases: ['北京', '北京市'] },
+  { city: '上海', region: '上海', aliases: ['上海', '上海市'] },
+  { city: '广州', region: '广东', aliases: ['广州', '广州市'] },
+  { city: '深圳', region: '广东', aliases: ['深圳', '深圳市'] },
+  { city: '杭州', region: '浙江', aliases: ['杭州', '杭州市'] },
+  { city: '重庆', region: '重庆', aliases: ['重庆', '重庆市'] },
+  { city: '西安', region: '陕西', aliases: ['西安', '西安市'] },
+  { city: '武汉', region: '湖北', aliases: ['武汉', '武汉市'] },
+  { city: '南京', region: '江苏', aliases: ['南京', '南京市'] },
+];
+
+const buildSearchContext = (
+  message: string,
+  enterprise: { name?: string; tag?: string; industry?: string; desc?: string }
+): SearchContext | undefined => {
+  const explicit = detectLocation(message);
+  if (explicit) {
+    return explicit;
+  }
+
+  const enterpriseText = [enterprise.name, enterprise.tag, enterprise.industry, enterprise.desc]
+    .filter(Boolean)
+    .join(' ');
+  return detectLocation(enterpriseText);
+};
+
+const detectLocation = (text: string): SearchContext | undefined => {
+  const match = LOCATION_ALIASES.find((location) =>
+    location.aliases.some((alias) => text.includes(alias))
+  );
+  if (!match) {
+    return undefined;
+  }
+  return {
+    country: '中国',
+    region: match.region,
+    city: match.city,
+  };
+};
+
+const ThinkingIndicator: React.FC<{ label: string }> = ({ label }) => (
+  <div className="flex items-center gap-2.5 text-on-surface-variant">
+    <span className="text-[13px] font-medium">{label || '正在思考'}</span>
+    <span className="flex gap-1">
+      {[0, 1, 2].map((index) => (
+        <motion.span
+          key={index}
+          className="size-1.5 rounded-full bg-secondary/80"
+          animate={{ opacity: [0.25, 1, 0.25] }}
+          transition={{ duration: 0.9, repeat: Infinity, delay: index * 0.16 }}
+        />
+      ))}
+    </span>
+  </div>
+);
+
+function restoreConversationMessage(message: GeoAgentConversationMessage): ChatMessage {
+  const baseMessage = {
+    id: message.id,
+    role: message.role as 'user' | 'assistant',
+    status: 'complete' as const,
+  };
+  const metadata = message.metadata ?? {};
+
+  if (message.role === 'assistant' && metadata.type === 'knowledge_draft') {
+    const draft = metadata.draft as GeoAgentKnowledgeDraft | undefined;
+    const confirmationState = typeof metadata.confirmation_state === 'string'
+      ? metadata.confirmation_state as ChatMessage['confirmationState']
+      : 'approval-requested';
+    return {
+      ...baseMessage,
+      content: message.content.startsWith(KNOWLEDGE_DRAFT_MESSAGE_MARKER)
+        ? '我已根据资料生成企业知识库草稿。请先核对下方模板内容。'
+        : message.content,
+      knowledgeDraft: confirmationState === 'approval-requested' ? draft : undefined,
+      confirmationState,
+      confirmationApproved: typeof metadata.confirmation_approved === 'boolean'
+        ? metadata.confirmation_approved
+        : undefined,
+    };
+  }
+
+  if (message.role === 'assistant' && metadata.type === 'geo_phase_prompt') {
+    const project = metadata.project as GeoAgentGeoProject | undefined;
+    const platform = metadata.platform === 'deepseek' ? 'deepseek' : 'doubao';
+    const confirmationState = typeof metadata.confirmation_state === 'string'
+      ? metadata.confirmation_state as ChatMessage['confirmationState']
+      : 'approval-requested';
+    const report = metadata.report as GeoAgentGeoReport | undefined;
+    return {
+      ...baseMessage,
+      content: message.content,
+      phaseTwoPrompt: confirmationState === 'approval-requested' ? project : undefined,
+      phaseTwoPlatform: platform,
+      geoReport: report,
+      confirmationState,
+      confirmationApproved: typeof metadata.confirmation_approved === 'boolean'
+        ? metadata.confirmation_approved
+        : undefined,
+      status: metadata.status === 'failed' ? 'error' : 'complete',
+    };
+  }
+
+  if (message.role === 'assistant' && metadata.type === 'geo_phase_result') {
+    const platform = metadata.platform === 'deepseek' ? 'deepseek' : 'doubao';
+    const sourceDiscovery = metadata.source_discovery as GeoAgentGeoSourceDiscovery | undefined;
+    const supportArticles = metadata.support_articles as GeoAgentGeoSupportArticleRunResponse | undefined;
+    const phase = Number(metadata.phase || 0);
+    return {
+      ...baseMessage,
+      content: message.content,
+      phaseTwoPlatform: platform,
+      sourceDiscovery,
+      supportArticles,
+      sourceDiscoveryAttempted: phase === 3,
+      articleDraftAttempts: supportArticles
+        ? { consulting: Boolean(supportArticles.consulting_draft), review: Boolean(supportArticles.review_draft) }
+        : undefined,
+      confirmationState: typeof metadata.confirmation_state === 'string'
+        ? metadata.confirmation_state as ChatMessage['confirmationState']
+        : 'output-available',
+      confirmationApproved: typeof metadata.confirmation_approved === 'boolean'
+        ? metadata.confirmation_approved
+        : undefined,
+      status: metadata.status === 'failed' ? 'error' : 'complete',
+    };
+  }
+
+  if (message.role === 'assistant' && metadata.type === 'chat_response') {
+    const provider = typeof metadata.provider === 'string' ? metadata.provider : undefined;
+    const model = typeof metadata.model === 'string' ? metadata.model : undefined;
+    const error = typeof metadata.error === 'string' ? metadata.error : null;
+    return {
+      ...baseMessage,
+      content: message.content,
+      provider,
+      model,
+      error,
+      sources: Array.isArray(metadata.sources) ? metadata.sources as SourceCitation[] : [],
+      searchQueries: Array.isArray(metadata.search_queries) ? metadata.search_queries as string[] : [],
+      searchActions: Array.isArray(metadata.search_actions) ? metadata.search_actions as SearchAction[] : [],
+      searchUsage: metadata.search_usage && typeof metadata.search_usage === 'object'
+        ? metadata.search_usage as SearchUsage
+        : {},
+      reasoningContent: typeof metadata.reasoning_content === 'string'
+        ? metadata.reasoning_content
+        : undefined,
+      reasoning: buildAssistantReasoning(provider, model, { error: Boolean(error) }),
+      status: metadata.status === 'error' || error ? 'error' : 'complete',
+    };
+  }
+
+  if (message.role === 'assistant' && message.content.startsWith(KNOWLEDGE_DRAFT_MESSAGE_MARKER)) {
+    try {
+      const payload = JSON.parse(message.content.slice(KNOWLEDGE_DRAFT_MESSAGE_MARKER.length)) as {
+        content?: string;
+        draft?: GeoAgentKnowledgeDraft;
+      };
+      return {
+        ...baseMessage,
+        content: payload.content ?? '我已根据资料生成企业知识库草稿。请先核对下方模板内容。',
+        knowledgeDraft: payload.draft,
+        confirmationState: 'approval-requested',
+      };
+    } catch {
+      return {
+        ...baseMessage,
+        content: '知识库草稿消息解析失败，请重新生成草稿。',
+        status: 'error',
+      };
+    }
+  }
+
+  return {
+    ...baseMessage,
+    content: message.content,
+  };
 }
+
+const QuickSuggestion: React.FC<{
+  icon: React.ElementType;
+  text: string;
+  value: string;
+  onSelect: (value: string) => void;
+}> = ({ icon: Icon, text, value, onSelect }) => (
+  <Suggestion
+    className="flex min-h-[44px] cursor-pointer items-center gap-2.5 rounded-2xl border-transparent bg-[#f7f7f5] px-4 py-3 text-[13px] font-semibold leading-none text-on-surface transition-all hover:border-secondary hover:bg-[#f0eee9] dark:bg-surface-variant/45 dark:hover:bg-surface-variant/70"
+    onClick={onSelect}
+    suggestion={value}
+    variant="outline"
+  >
+    <Icon className="size-4 shrink-0 text-secondary" />
+    {text}
+  </Suggestion>
+);
+
+const ModelIcon: React.FC<{ model: ModelCapability }> = ({ model }) => {
+  if (model.providerKey === 'doubao') {
+    return <Globe className="size-4 shrink-0 text-[#2f7ed8] dark:text-[#8abfff]" />;
+  }
+
+  if (model.providerKey === 'deepseek') {
+    return <Search className="size-4 shrink-0 text-[#2f2f2f] dark:text-[#f1f1f1]" />;
+  }
+
+  return <Brain className="size-4 shrink-0 text-[#2f2f2f] dark:text-[#f1f1f1]" />;
+};
+
+function platformLabelFor(platform: 'doubao' | 'deepseek'): string {
+  return platform === 'doubao' ? '豆包' : 'DeepSeek';
+}
+
+function articleTypeLabelFor(articleType: 'consulting' | 'review'): string {
+  return articleType === 'consulting' ? '咨询类' : '测评类';
+}
+
+function formatReportItem(item: unknown, compact = false): string {
+  if (typeof item === 'string') {
+    return item;
+  }
+  if (item && typeof item === 'object') {
+    const data = item as Record<string, unknown>;
+    const primary = data.question || data.topic || data.query || data.title || data.keyword || data.source || data.channel || data.platform;
+    const secondary = data.intent || data.why || data.purpose || data.reason || data.publish_reason || data.evidence;
+    const priority = data.priority ? `优先级：${data.priority}` : '';
+    const type = data.type ? `类型：${data.type}` : '';
+    const score = data.score ? `评分：${data.score}` : '';
+    const confidence = data.confidence ? `置信度：${data.confidence}` : '';
+    const contentType = data.content_type ? `内容类型：${data.content_type}` : '';
+    const region = data.region ? `区域：${data.region}` : '';
+    const sourceType = data.source_type ? `信源类型：${data.source_type}` : '';
+    const url = data.url ? `链接：${data.url}` : '';
+    if (primary) {
+      return compact
+        ? String(primary)
+        : [
+          String(primary),
+          [type, contentType, sourceType, region, priority, score, confidence, url].filter(Boolean).join('；'),
+          secondary ? `原因：${secondary}` : '',
+        ].filter(Boolean).join('\n');
+    }
+    return Object.entries(data)
+      .filter(([, value]) => value !== undefined && value !== null && value !== '')
+      .map(([key, value]) => `${key}：${Array.isArray(value) ? value.join('、') : String(value)}`)
+      .join('；');
+  }
+  return String(item ?? '');
+}
+
+const OptionToggle: React.FC<{
+  checked: boolean;
+  disabled: boolean;
+  icon: React.ElementType;
+  label: string;
+  title: string;
+  onChange: () => void;
+}> = ({ checked, disabled, icon: Icon, label, title, onChange }) => (
+  <button
+    className={cn(
+      'flex w-full items-center justify-between gap-3 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors',
+      disabled
+        ? 'cursor-not-allowed text-[#9d968d] dark:text-[#8a8a8a]'
+        : 'text-[#3f3932] hover:bg-[#ebe5dc] dark:text-[#f0f0f0] dark:hover:bg-[#3a3a3a]'
+    )}
+    disabled={disabled}
+    onClick={onChange}
+    title={title}
+    type="button"
+  >
+    <span className="flex min-w-0 items-center gap-2.5">
+      <Icon className="size-4 shrink-0" />
+      {label}
+    </span>
+    {disabled ? (
+      <span className="shrink-0 text-[12px] font-semibold text-[#8d8479] dark:text-[#9a9a9a]">
+        不可用
+      </span>
+    ) : (
+      <span
+        className={cn(
+          'relative h-5 w-9 shrink-0 rounded-full transition-colors',
+          checked ? 'bg-[#2f8ae5]' : 'bg-[#d6cfc4] dark:bg-[#575757]'
+        )}
+      >
+        <span
+          className={cn(
+            'absolute top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform',
+            checked ? 'translate-x-[18px]' : 'translate-x-0.5'
+          )}
+        />
+      </span>
+    )}
+  </button>
+);

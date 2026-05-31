@@ -1,353 +1,2042 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Rss, 
-  FileText, 
-  Network, 
-  CheckCircle, 
-  Database, 
-  ShieldCheck, 
-  Plus, 
-  ArrowLeft, 
-  Search, 
-  Building2, 
-  ChevronRight, 
-  Layers, 
-  Sparkles 
+import React, { useEffect, useState } from 'react';
+import {
+  ArrowLeft,
+  AlertCircle,
+  Building2,
+  CheckCircle2,
+  ChevronRight,
+  Database,
+  Edit3,
+  Eye,
+  FileText,
+  Image,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  Target,
+  Trash2,
+  Upload,
+  X,
 } from 'lucide-react';
-import { cn } from '../lib/utils';
-import { useEnterprise } from '../context/EnterpriseContext';
-import { ENTERPRISES } from '../data/enterprises';
+
+type KnowledgeMode = 'list' | 'detail' | 'builder';
+
+const DELETE_CONFIRMATION_TEXT = '确认删除此知识库';
+
+type KnowledgeHealthStatus = 'good' | 'warning' | 'danger' | 'muted';
+
+type KnowledgeHealthDimension = {
+  key: string;
+  label: string;
+  score: number;
+  weight: number;
+  status: KnowledgeHealthStatus;
+  reason: string;
+  missingItems: string[];
+  recommendedAction: string;
+};
+
+type KnowledgeGapItem = {
+  label: string;
+  priority: 'high' | 'medium' | 'low';
+  actionPrompt: string;
+};
+
+type GeoStageStatus = {
+  label: string;
+  status: '可用' | '进行中' | '待启动' | '待开发' | '已暂缓';
+  description: string;
+};
+
+type KnowledgeHealthReport = {
+  score: number;
+  verdict: string;
+  dimensions: KnowledgeHealthDimension[];
+  gaps: KnowledgeGapItem[];
+};
+
+type UploadedImageAsset = {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  previewUrl: string;
+};
+
+type ProfileFormState = {
+  company_name: string;
+  short_name: string;
+  industry: string;
+  main_business: string;
+  official_website: string;
+  official_media: string;
+  detailed_intro: string;
+  brand_story: string;
+  products_services: string;
+  product_features: string;
+  user_pain_points: string;
+  trust_endorsements: string;
+  brand_authorization_pricing: string;
+  cases: string;
+  business_regions: string;
+  customer_service_phone: string;
+  current_pain_points: string;
+  core_advantages: string;
+  extra_info: string;
+  image_notes: string;
+  target_keywords: string;
+};
+
+const emptyProfile: ProfileFormState = {
+  company_name: '',
+  short_name: '',
+  industry: '',
+  main_business: '',
+  official_website: '',
+  official_media: '',
+  detailed_intro: '',
+  brand_story: '',
+  products_services: '',
+  product_features: '',
+  user_pain_points: '',
+  trust_endorsements: '',
+  brand_authorization_pricing: '',
+  cases: '',
+  business_regions: '',
+  customer_service_phone: '',
+  current_pain_points: '',
+  core_advantages: '',
+  extra_info: '',
+  image_notes: '',
+  target_keywords: '',
+};
+
+const profileSections: Array<{
+  title: string;
+  description: string;
+  fields: Array<{
+    key: keyof ProfileFormState;
+    label: string;
+    placeholder: string;
+    type?: 'input' | 'textarea';
+    rows?: number;
+    required?: boolean;
+  }>;
+}> = [
+  {
+    title: '基础身份',
+    description: '建立企业实体，后续会作为 GEO 推荐和品牌召回的基础锚点。',
+    fields: [
+      { key: 'company_name', label: '公司名称/简称', placeholder: '如：成都行乐音改汽车用品有限公司（成都行乐音改）', type: 'input', required: true },
+      { key: 'short_name', label: '常用简称', placeholder: '如：成都行乐音改', type: 'input' },
+      { key: 'industry', label: '所属行业', placeholder: '如：汽车音响改装、隔音工程', type: 'input' },
+      { key: 'main_business', label: '主营业务', placeholder: '如：汽车音响无损升级、全车隔音、DSP 调音', type: 'input' },
+      { key: 'official_website', label: '官方网站', placeholder: '官网链接；没有官网可留空，后续可上传宣传单页/海报', type: 'input' },
+      { key: 'official_media', label: '官方自媒体', placeholder: '公众号、抖音、小红书等链接或名称', type: 'textarea', rows: 3 },
+    ],
+  },
+  {
+    title: '企业介绍',
+    description: '让模型知道企业是谁、为什么可信、适合服务什么用户。',
+    fields: [
+      { key: 'detailed_intro', label: '企业详细介绍', placeholder: '建议不低于 1000 字，可按公司背景、团队、门店、服务流程、经营理念分类整理。', type: 'textarea', rows: 8 },
+      { key: 'brand_story', label: '品牌故事', placeholder: '1000 字内，说明品牌由来、初心、代表事件。', type: 'textarea', rows: 5 },
+      { key: 'current_pain_points', label: '目前痛点/现状', placeholder: '如：新店刚开业口碑不足、不在传统改装商圈内、全网声量弱。', type: 'textarea', rows: 4 },
+      { key: 'core_advantages', label: '核心优势与特色', placeholder: '如：专注无损改装、新能源专属方案、IASCA 认证调音师。', type: 'textarea', rows: 4 },
+    ],
+  },
+  {
+    title: '产品服务',
+    description: '用于生成服务介绍、对比文章、排行榜回答和用户问题答复。',
+    fields: [
+      { key: 'products_services', label: '产品/服务介绍', placeholder: '可按类别整理：入门音响升级、发烧级改装、全车隔音、新能源车型方案等。', type: 'textarea', rows: 6 },
+      { key: 'product_features', label: '产品/服务特点', placeholder: '产品优势、卖点、工艺、材料、售后等，可分类整理。', type: 'textarea', rows: 5 },
+      { key: 'brand_authorization_pricing', label: '品牌授权与客单价', placeholder: '如：代理德国彩虹、MBQ 等中端品牌，主打无损升级，客单价 1500-8000 元。', type: 'textarea', rows: 4 },
+      { key: 'business_regions', label: '业务区域范围', placeholder: '全国/同城/区域，主要经营区域与扩展区域。', type: 'textarea', rows: 3 },
+      { key: 'customer_service_phone', label: '客服办公电话', placeholder: '优先 400 > 固话 > 办公手机', type: 'input' },
+    ],
+  },
+  {
+    title: '用户与背书',
+    description: '帮助模型判断用户场景、信任证据和推荐理由。',
+    fields: [
+      { key: 'user_pain_points', label: '用户痛点', placeholder: '包含用户画像，请详细描述：预算、车型、改装顾虑、音质偏好、决策路径等。', type: 'textarea', rows: 6 },
+      { key: 'trust_endorsements', label: '信任背书', placeholder: '资质、授权、行业影响力、获奖荣誉、平台认证、媒体报道等。', type: 'textarea', rows: 5 },
+      { key: 'cases', label: '行业/客户案例', placeholder: '大客户案例、销售数据、团队人数、专家人数、行业影响力等。', type: 'textarea', rows: 5 },
+      { key: 'extra_info', label: '其他信息补充', placeholder: '任何希望模型记住的业务事实、禁忌表达、品牌语气。', type: 'textarea', rows: 4 },
+    ],
+  },
+  {
+    title: '图片与关键词',
+    description: '上传门店、产品和宣传图片，并录入目标关键词生成长尾语义词。',
+    fields: [
+      { key: 'target_keywords', label: '想推广的关键词', placeholder: '每行一个关键词，例如：\n成都汽车音响改装\n成都靠谱的汽车音响改装店\n成都汽车音响改装店推荐', type: 'textarea', rows: 6 },
+    ],
+  },
+];
 
 export function KnowledgeBase() {
-  const { currentEnterpriseId, setEnterpriseId } = useEnterprise();
-  const [selectedEnterpriseId, setSelectedEnterpriseId] = useState<string | null>(currentEnterpriseId);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [mode, setMode] = useState<KnowledgeMode>('list');
+  const [profiles, setProfiles] = useState<GeoAgentEnterpriseProfile[]>([]);
+  const [selectedProfile, setSelectedProfile] = useState<GeoAgentEnterpriseProfile | null>(null);
+  const [knowledgeEntries, setKnowledgeEntries] = useState<GeoAgentKnowledgeEntry[]>([]);
+  const [knowledgeTotal, setKnowledgeTotal] = useState(0);
+  const [indexStatus, setIndexStatus] = useState<GeoAgentKnowledgeIndexStatus | null>(null);
+  const [geoProject, setGeoProject] = useState<GeoAgentGeoProject | null>(null);
+  const [geoWorkflowState, setGeoWorkflowState] = useState<GeoAgentWorkflowState | null>(null);
+  const [geoReports, setGeoReports] = useState<Record<'doubao' | 'deepseek', GeoAgentGeoReport | null>>({
+    doubao: null,
+    deepseek: null,
+  });
+  const [geoQuestionSets, setGeoQuestionSets] = useState<Record<'doubao' | 'deepseek', GeoAgentGeoQuestionSet | null>>({
+    doubao: null,
+    deepseek: null,
+  });
+  const [geoSourceDiscoveries, setGeoSourceDiscoveries] = useState<Record<'doubao' | 'deepseek', GeoAgentGeoSourceDiscovery | null>>({
+    doubao: null,
+    deepseek: null,
+  });
+  const [geoArticleDrafts, setGeoArticleDrafts] = useState<Record<'doubao' | 'deepseek', { consulting: GeoAgentGeoArticleDraft | null; review: GeoAgentGeoArticleDraft | null }>>({
+    doubao: { consulting: null, review: null },
+    deepseek: { consulting: null, review: null },
+  });
+  const [profileForm, setProfileForm] = useState<ProfileFormState>(emptyProfile);
+  const [uploadedImages, setUploadedImages] = useState<UploadedImageAsset[]>([]);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<GeoAgentEnterpriseProfile | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
 
-  // Sync selected enterprise view when global enterprise selection changes
+  const refreshProfiles = () => {
+    if (!window.geoAgent?.getKnowledgeProfiles) {
+      setProfiles([]);
+      return Promise.resolve();
+    }
+    return window.geoAgent.getKnowledgeProfiles()
+      .then((response) => setProfiles(response.profiles))
+      .catch(() => setProfiles([]));
+  };
+
+  const refreshKnowledgeEntries = (projectId = selectedProfile?.project_id) => {
+    if (!window.geoAgent?.getKnowledgeProfile || !projectId) {
+      setKnowledgeEntries([]);
+      setKnowledgeTotal(0);
+      setIndexStatus(null);
+      setGeoProject(null);
+      setGeoWorkflowState(null);
+      setGeoWorkflowState(null);
+      setGeoReports({ doubao: null, deepseek: null });
+      setGeoQuestionSets({ doubao: null, deepseek: null });
+      setGeoSourceDiscoveries({ doubao: null, deepseek: null });
+      setGeoArticleDrafts({ doubao: { consulting: null, review: null }, deepseek: { consulting: null, review: null } });
+      return Promise.resolve();
+    }
+
+    return window.geoAgent.getKnowledgeProfile(projectId)
+      .then((response) => {
+        setSelectedProfile(response.profile);
+        setKnowledgeEntries(response.entries);
+        setKnowledgeTotal(response.total);
+        setIndexStatus(response.index_status ?? null);
+        return window.geoAgent?.ensureGeoProject?.(projectId)
+          .then((project) => {
+            setGeoProject(project);
+            return refreshGeoReports(project);
+          })
+          .catch(() => {
+            setGeoProject(null);
+            setGeoWorkflowState(null);
+          });
+      })
+      .catch(() => {
+        setKnowledgeEntries([]);
+        setKnowledgeTotal(0);
+        setIndexStatus(null);
+        setGeoProject(null);
+        setGeoWorkflowState(null);
+        setGeoReports({ doubao: null, deepseek: null });
+        setGeoQuestionSets({ doubao: null, deepseek: null });
+        setGeoSourceDiscoveries({ doubao: null, deepseek: null });
+        setGeoArticleDrafts({ doubao: { consulting: null, review: null }, deepseek: { consulting: null, review: null } });
+      });
+  };
+
+  const refreshGeoReports = (project: GeoAgentGeoProject) => {
+    const workflowPromise = window.geoAgent?.getGeoWorkflowState
+      ? window.geoAgent.getGeoWorkflowState(project.id)
+        .then(setGeoWorkflowState)
+        .catch(() => setGeoWorkflowState(null))
+      : Promise.resolve();
+    if (!window.geoAgent?.getLatestGeoReport) {
+      setGeoReports({ doubao: null, deepseek: null });
+    }
+    if (!window.geoAgent?.getLatestGeoQuestionSet) {
+      setGeoQuestionSets({ doubao: null, deepseek: null });
+    }
+    if (!window.geoAgent?.getLatestGeoSourceDiscovery) {
+      setGeoSourceDiscoveries({ doubao: null, deepseek: null });
+    }
+    if (!window.geoAgent?.getLatestGeoArticleDraft) {
+      setGeoArticleDrafts({ doubao: { consulting: null, review: null }, deepseek: { consulting: null, review: null } });
+    }
+    const reportsPromise = Promise.all(
+      (['doubao', 'deepseek'] as const).map((platform) =>
+        window.geoAgent?.getLatestGeoReport(project.id, platform)
+          .then((report) => [platform, report] as const)
+          .catch(() => [platform, null] as const)
+      )
+    ).then((entries) => {
+      setGeoReports(Object.fromEntries(entries) as Record<'doubao' | 'deepseek', GeoAgentGeoReport | null>);
+    });
+    const questionSetsPromise = Promise.all(
+      (['doubao', 'deepseek'] as const).map((platform) =>
+        window.geoAgent?.getLatestGeoQuestionSet?.(project.id, platform)
+          .then((questionSet) => [platform, questionSet] as const)
+          .catch(() => [platform, null] as const)
+      )
+    ).then((entries) => {
+      setGeoQuestionSets(Object.fromEntries(entries) as Record<'doubao' | 'deepseek', GeoAgentGeoQuestionSet | null>);
+    });
+    const sourceDiscoveriesPromise = Promise.all(
+      (['doubao', 'deepseek'] as const).map((platform) =>
+        window.geoAgent?.getLatestGeoSourceDiscovery?.(project.id, platform)
+          .then((discovery) => [platform, discovery] as const)
+          .catch(() => [platform, null] as const)
+      )
+    ).then((entries) => {
+      setGeoSourceDiscoveries(Object.fromEntries(entries) as Record<'doubao' | 'deepseek', GeoAgentGeoSourceDiscovery | null>);
+    });
+    const articleDraftsPromise = Promise.all(
+      (['doubao', 'deepseek'] as const).map(async (platform) => {
+        const [consulting, review] = await Promise.all([
+          window.geoAgent?.getLatestGeoArticleDraft?.(project.id, platform, 'consulting').catch(() => null),
+          window.geoAgent?.getLatestGeoArticleDraft?.(project.id, platform, 'review').catch(() => null),
+        ]);
+        return [platform, { consulting, review }] as const;
+      })
+    ).then((entries) => {
+      setGeoArticleDrafts(Object.fromEntries(entries) as Record<'doubao' | 'deepseek', { consulting: GeoAgentGeoArticleDraft | null; review: GeoAgentGeoArticleDraft | null }>);
+    });
+    return Promise.all([workflowPromise, reportsPromise, questionSetsPromise, sourceDiscoveriesPromise, articleDraftsPromise]).then(() => undefined);
+  };
+
   useEffect(() => {
-    setSelectedEnterpriseId(currentEnterpriseId);
-  }, [currentEnterpriseId]);
+    refreshProfiles();
+  }, []);
 
-  const selectedEnterprise = ENTERPRISES.find(e => e.id === selectedEnterpriseId);
+  useEffect(() => {
+    const handleGeoProjectChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId?: string; geoProjectId?: string }>).detail;
+      const currentProjectId = selectedProfile?.project_id || selectedProfile?.id;
+      if (!currentProjectId) {
+        return;
+      }
+      if (detail?.projectId && detail.projectId !== currentProjectId) {
+        return;
+      }
+      refreshKnowledgeEntries(currentProjectId);
+    };
+    window.addEventListener('geo-agent-geo-project-changed', handleGeoProjectChanged);
+    return () => window.removeEventListener('geo-agent-geo-project-changed', handleGeoProjectChanged);
+  }, [selectedProfile?.project_id, selectedProfile?.id]);
 
-  const filteredEnterprises = ENTERPRISES.filter(e => 
-    e.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    e.industry.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    e.tag.toLowerCase().includes(searchQuery.toLowerCase())
+  const openEnterprise = (profile: GeoAgentEnterpriseProfile) => {
+    setSelectedProfile(profile);
+    refreshKnowledgeEntries(profile.project_id || profile.id);
+    setMode('detail');
+  };
+
+  const openBuilder = () => {
+    setProfileForm(emptyProfile);
+    uploadedImages.forEach((image) => URL.revokeObjectURL(image.previewUrl));
+    setUploadedImages([]);
+    setSelectedProfile(null);
+    setIsEditingProfile(false);
+    setProfileError(null);
+    setMode('builder');
+  };
+
+  const openEditor = () => {
+    if (!selectedProfile) {
+      return;
+    }
+    setProfileForm(profileToForm(selectedProfile));
+    setUploadedImages([]);
+    setIsEditingProfile(true);
+    setProfileError(null);
+    setMode('builder');
+  };
+
+  const handleSaveProfile = async () => {
+    if (!profileForm.company_name.trim() || isSavingProfile) {
+      return;
+    }
+    if (!window.geoAgent?.saveEnterpriseProfile) {
+      setProfileError('请在 Electron 桌面模式中使用本地知识库。');
+      return;
+    }
+
+    const projectId = isEditingProfile && selectedProfile?.project_id
+      ? selectedProfile.project_id
+      : profileForm.short_name.trim() || profileForm.company_name.trim();
+    setIsSavingProfile(true);
+    setProfileError(null);
+    try {
+      const payload = compactProfile({
+        ...profileForm,
+        image_notes: buildImageNotes(uploadedImages),
+        project_id: projectId,
+      });
+      const response = isEditingProfile && window.geoAgent.updateKnowledgeProfile
+        ? await window.geoAgent.updateKnowledgeProfile(projectId, payload)
+        : await window.geoAgent.saveEnterpriseProfile(payload);
+      setKnowledgeEntries(response.entries);
+      setKnowledgeTotal(response.total);
+      await refreshProfiles();
+      window.dispatchEvent(new CustomEvent('geo-agent-enterprises-refresh'));
+      await refreshKnowledgeEntries(projectId);
+      setMode('detail');
+    } catch (error) {
+      setProfileError(error instanceof Error ? error.message : '企业知识库保存失败。');
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  const handleDeleteProfile = async () => {
+    if (!deleteTarget?.project_id || deleteConfirmation !== DELETE_CONFIRMATION_TEXT || isDeleting) {
+      return;
+    }
+    if (!window.geoAgent?.deleteKnowledgeProfile) {
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      await window.geoAgent.deleteKnowledgeProfile(deleteTarget.project_id);
+      setDeleteTarget(null);
+      setDeleteConfirmation('');
+      setSelectedProfile(null);
+      setKnowledgeEntries([]);
+      setKnowledgeTotal(0);
+      setIndexStatus(null);
+      setGeoProject(null);
+      await refreshProfiles();
+      window.dispatchEvent(new CustomEvent('geo-agent-enterprises-refresh'));
+      setMode('list');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  if (mode === 'builder') {
+    return (
+      <EnterpriseProfileBuilder
+        error={profileError}
+        form={profileForm}
+        images={uploadedImages}
+        isEditing={isEditingProfile}
+        isSaving={isSavingProfile}
+        onBack={() => setMode(isEditingProfile ? 'detail' : 'list')}
+        onChange={(key, value) => setProfileForm((current) => ({ ...current, [key]: value }))}
+        onImagesChange={setUploadedImages}
+        onSave={handleSaveProfile}
+      />
+    );
+  }
+
+  if (mode === 'detail') {
+    return (
+      <>
+        <KnowledgeDetail
+          entries={knowledgeEntries}
+          geoArticleDrafts={geoArticleDrafts}
+          geoProject={geoProject}
+          geoWorkflowState={geoWorkflowState}
+          geoQuestionSets={geoQuestionSets}
+          geoReports={geoReports}
+          geoSourceDiscoveries={geoSourceDiscoveries}
+          indexStatus={indexStatus}
+          onBack={() => setMode('list')}
+          onCreate={openBuilder}
+          onDelete={() => selectedProfile && setDeleteTarget(selectedProfile)}
+          onEdit={openEditor}
+          onRefresh={() => refreshKnowledgeEntries()}
+          onStatusChange={setIndexStatus}
+          profile={selectedProfile}
+          projectId={selectedProfile?.project_id || selectedProfile?.id || ''}
+          setEntries={setKnowledgeEntries}
+          setTotal={setKnowledgeTotal}
+          total={knowledgeTotal}
+        />
+        {deleteTarget && (
+          <DeleteProfileDialog
+            confirmation={deleteConfirmation}
+            isDeleting={isDeleting}
+            onCancel={() => {
+              setDeleteTarget(null);
+              setDeleteConfirmation('');
+            }}
+            onChange={setDeleteConfirmation}
+            onDelete={handleDeleteProfile}
+            profile={deleteTarget}
+          />
+        )}
+      </>
+    );
+  }
+
+  return (
+    <div className="mx-auto flex min-h-full max-w-7xl flex-col gap-8 p-4 pb-16 sm:p-6 md:p-8 lg:p-xl">
+      <section className="flex flex-col gap-8 rounded-[20px] bg-[#f7f7f5] p-8 dark:bg-surface-variant/40 md:p-12 lg:flex-row lg:items-center lg:justify-between">
+        <div className="max-w-3xl space-y-3">
+          <span className="text-[14px] font-bold tracking-wide text-on-surface-variant/80">
+            Knowledge Base
+          </span>
+          <h1 className="font-heading text-[36px] font-bold leading-tight tracking-tight text-primary">
+            企业数字资产引擎
+          </h1>
+          <p className="text-[16px] leading-relaxed text-on-surface-variant">
+            为每个企业建立结构化知识库，沉淀公司信息、产品服务、用户痛点、信任背书、案例与目标关键词。智能助手会优先检索这些本地资料。
+          </p>
+          <button
+            className="mt-3 inline-flex items-center gap-2 rounded-xl bg-secondary px-4 py-2.5 text-[13px] font-bold text-on-secondary transition-colors hover:bg-secondary/90"
+            onClick={openBuilder}
+            type="button"
+          >
+            <Plus className="h-4 w-4" />
+            建立企业知识库
+          </button>
+        </div>
+        <div className="hidden h-[160px] w-[240px] shrink-0 items-center justify-center md:flex">
+          <svg viewBox="0 0 200 120" className="h-full w-full text-primary" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8">
+            <path d="M60 20 h80 v80 h-80 z" className="fill-surface" />
+            <path d="M70 40 h60 M70 60 h60 M70 80 h40" strokeDasharray="3,3" />
+            <path d="M50 30 h10 v70 h-10 z" className="fill-surface" />
+            <circle cx="150" cy="30" r="12" className="fill-surface" />
+            <path d="M150 42 L150 55" />
+          </svg>
+        </div>
+      </section>
+
+      <div className="flex items-center justify-between">
+        <span className="text-[12px] text-on-surface-variant/70">
+          真实企业知识库来自本地 SQLite。演示数据请使用 `scripts/seed_demo_knowledge.py --data-dir &lt;dir&gt;` 导入。
+        </span>
+      </div>
+
+      {profiles.length > 0 ? (
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        {profiles.map((profile) => (
+          <button
+            className="group flex h-[360px] min-w-0 cursor-pointer flex-col gap-4 rounded-2xl bg-[#f7f7f5] p-6 text-left transition-all hover:bg-surface-container dark:bg-surface-variant/45"
+            key={profile.id}
+            onClick={() => openEnterprise(profile)}
+            type="button"
+          >
+            <div className="flex min-w-0 items-start justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-secondary/10 text-secondary">
+                  <Building2 className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="truncate font-heading text-[20px] font-bold text-primary transition-colors group-hover:text-secondary">
+                    {profile.short_name || profile.company_name}
+                  </h3>
+                  <p className="mt-0.5 truncate font-mono text-[11px] uppercase tracking-wider text-on-surface-variant">
+                    {profile.industry || '未填写行业'}
+                  </p>
+                </div>
+              </div>
+              <span className="max-w-[42%] shrink-0 truncate rounded-full border border-outline-variant/40 bg-surface px-2 py-0.5 text-[10px] font-bold uppercase text-on-surface-variant">
+                {profile.main_business || '企业知识库'}
+              </span>
+            </div>
+
+            <p className="line-clamp-4 min-h-[88px] text-[14px] leading-relaxed text-on-surface-variant">
+              {profile.detailed_intro || profile.products_services || '暂无企业介绍。'}
+            </p>
+
+            <div className="mt-auto grid h-[78px] grid-cols-3 gap-2 rounded-2xl border border-outline-variant/10 bg-white/45 px-4 py-3 text-center dark:bg-surface-variant/40">
+              <Metric label="知识条目" value={`${profile.entry_count} 条`} />
+              <Metric label="业务区域" value={profile.business_regions || '未填'} />
+              <Metric label="关键词" value={profile.target_keywords ? '已录入' : '待补充'} accent />
+            </div>
+
+            <div className="flex min-w-0 items-center justify-between gap-3 pt-2 font-mono text-[12px]">
+              <span className="min-w-0 truncate text-on-surface-variant/60">更新于 {profile.updated_at}</span>
+              <span className="inline-flex shrink-0 items-center gap-1 font-bold text-secondary transition-transform group-hover:translate-x-1">
+                进入知识库管理
+                <ChevronRight className="h-4 w-4" />
+              </span>
+            </div>
+          </button>
+        ))}
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-dashed border-outline-variant/50 bg-[#f7f7f5] p-12 text-center dark:bg-surface-variant/25">
+          <Database className="mx-auto mb-4 h-10 w-10 text-secondary" />
+          <h2 className="font-heading text-[22px] font-bold text-primary">还没有真实企业知识库</h2>
+          <p className="mx-auto mt-2 max-w-2xl text-[14px] leading-relaxed text-on-surface-variant">
+            点击“建立企业知识库”录入真实资料，或在开发环境运行测试脚本导入完整演示数据。
+          </p>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <DeleteProfileDialog
+          confirmation={deleteConfirmation}
+          isDeleting={isDeleting}
+          onCancel={() => {
+            setDeleteTarget(null);
+            setDeleteConfirmation('');
+          }}
+          onChange={setDeleteConfirmation}
+          onDelete={handleDeleteProfile}
+          profile={deleteTarget}
+        />
+      )}
+    </div>
   );
+}
 
-  const handleSelectEnterprise = (id: string) => {
-    setSelectedEnterpriseId(id);
-    setEnterpriseId(id);
+function EnterpriseProfileBuilder({
+  error,
+  form,
+  images,
+  isEditing,
+  isSaving,
+  onBack,
+  onChange,
+  onImagesChange,
+  onSave,
+}: {
+  error: string | null;
+  form: ProfileFormState;
+  images: UploadedImageAsset[];
+  isEditing: boolean;
+  isSaving: boolean;
+  onBack: () => void;
+  onChange: (key: keyof ProfileFormState, value: string) => void;
+  onImagesChange: React.Dispatch<React.SetStateAction<UploadedImageAsset[]>>;
+  onSave: () => void;
+}) {
+  return (
+    <div className="mx-auto flex min-h-full max-w-7xl flex-col gap-6 p-4 pb-16 sm:p-6 md:p-8 lg:p-xl">
+      <div className="flex flex-col gap-4 border-b border-outline-variant/20 pb-6 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <button
+            className="mb-3 inline-flex items-center gap-2 text-[12px] font-bold uppercase tracking-widest text-secondary transition-colors hover:text-primary"
+            onClick={onBack}
+            type="button"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            返回知识库
+          </button>
+          <h1 className="font-heading text-[36px] font-bold leading-tight text-primary">
+            {isEditing ? '编辑企业知识库' : '建立企业知识库'}
+          </h1>
+          <p className="mt-2 max-w-4xl text-[14px] leading-relaxed text-on-surface-variant">
+            按字段录入企业资料后，系统会自动拆分为可检索知识条目，并根据目标关键词生成长尾语义词。后续智能助手、文章生成和网页生成都会优先使用这些资料。
+          </p>
+        </div>
+        <button
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-secondary px-5 py-3 text-[13px] font-bold text-on-secondary transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
+          disabled={!form.company_name.trim() || isSaving}
+          onClick={onSave}
+          type="button"
+        >
+          <Database className="h-4 w-4" />
+          {isSaving ? '正在保存' : isEditing ? '保存修改' : '建立知识库'}
+        </button>
+      </div>
+
+      {error && (
+        <p className="rounded-xl bg-red-500/10 px-4 py-3 text-[13px] text-red-600 dark:text-red-300">
+          {error}
+        </p>
+      )}
+
+      <div className="grid gap-6">
+        {profileSections.map((section) => (
+          <section className="rounded-2xl bg-[#f7f7f5] p-6 dark:bg-surface-variant/45" key={section.title}>
+            <div className="mb-5 flex flex-col gap-1">
+              <h2 className="flex items-center gap-2 font-heading text-[20px] font-bold text-primary">
+                <Plus className="h-5 w-5 text-secondary" />
+                {section.title}
+              </h2>
+              <p className="text-[13px] leading-relaxed text-on-surface-variant">
+                {section.description}
+              </p>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              {section.title === '图片与关键词' && (
+                <div className="md:col-span-2">
+                  <ImageUploadField images={images} onImagesChange={onImagesChange} />
+                </div>
+              )}
+              {section.fields.map((field) => {
+                const fieldKey = field.key;
+                return (
+                  <React.Fragment key={fieldKey}>
+                    <ProfileField
+                      field={field}
+                      onChange={(value) => onChange(fieldKey, value)}
+                      value={form[fieldKey]}
+                    />
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          </section>
+        ))}
+      </div>
+
+      <div className="rounded-2xl bg-[#f7f7f5] p-5 text-[13px] leading-relaxed text-on-surface-variant dark:bg-surface-variant/45">
+        <div className="mb-2 flex items-center gap-2 font-bold text-primary">
+          <Sparkles className="h-4 w-4 text-secondary" />
+          ChatBox 也可以录入
+        </div>
+        在智能助手中输入“建立企业知识库”或“补充企业资料”，并按这些字段描述企业，系统会同样写入本地知识库。这里的表单适合一次性完整录入，ChatBox 适合补充和迭代。
+      </div>
+    </div>
+  );
+}
+
+function ImageUploadField({
+  images,
+  onImagesChange,
+}: {
+  images: UploadedImageAsset[];
+  onImagesChange: React.Dispatch<React.SetStateAction<UploadedImageAsset[]>>;
+}) {
+  const handleUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.currentTarget.files ?? []) as File[];
+    if (!files.length) {
+      return;
+    }
+
+    const nextImages = files
+      .filter((file) => file.type.startsWith('image/'))
+      .map((file) => ({
+        id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        previewUrl: URL.createObjectURL(file),
+      }));
+
+    onImagesChange((current) => [...current, ...nextImages]);
+    event.target.value = '';
+  };
+
+  const removeImage = (id: string) => {
+    onImagesChange((current) => {
+      const removed = current.find((image) => image.id === id);
+      if (removed) {
+        URL.revokeObjectURL(removed.previewUrl);
+      }
+      return current.filter((image) => image.id !== id);
+    });
   };
 
   return (
-    <div className="p-4 sm:p-6 md:p-8 lg:p-xl max-w-7xl mx-auto flex flex-col gap-lg animate-in fade-in duration-300 min-h-full pb-16">
-      
-      {!selectedEnterprise ? (
-        <>
-          {/* Header for list */}
-          <div className="flex flex-col lg:flex-row justify-between items-center gap-8 bg-[#f7f7f5] dark:bg-surface-variant/40 rounded-[20px] p-8 md:p-12 mb-8 border-transparent">
-            <div className="space-y-3 max-w-2xl w-full">
-              <div className="flex items-center gap-2">
-                <span className="text-[14px] font-bold text-on-surface-variant/80 tracking-wide leading-none">
-                  Knowledge Base
-                </span>
-              </div>
-              <h1 className="text-[36px] font-bold text-primary tracking-tight leading-tight font-heading">
-                企业数字资产引擎
-              </h1>
-              <p className="text-[16px] text-on-surface-variant leading-relaxed mt-2">
-                存储不同企业的原始非结构化资料，管理面向大模型检索（RAG）的文档分块向量索引，以及结构化关系图谱建设。
-              </p>
-              <button className="mt-4 px-4 py-2 bg-secondary text-on-secondary hover:bg-secondary/90 text-[13px] font-bold rounded flex items-center gap-2 shrink-0 transition-colors">
-                <Plus className="w-4 h-4" />
-                导入新企业
+    <div>
+      <span className="mb-2 block text-[12px] font-bold text-primary">
+        图片上传
+      </span>
+      <label className="flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-outline-variant/50 bg-white px-6 py-8 text-center transition-colors hover:border-secondary hover:bg-secondary/5 dark:bg-[#1f1f1f] dark:hover:bg-secondary/10">
+        <Upload className="mb-3 h-8 w-8 text-secondary" />
+        <span className="text-[14px] font-bold text-primary">上传公司/门店/产品图片</span>
+        <span className="mt-2 max-w-2xl text-[13px] leading-relaxed text-on-surface-variant">
+          支持门头照、全景图、产品图片、合作商墙、企业形象墙等。建议与高德、美团、抖音展示图片保持一致。
+        </span>
+        <span className="mt-3 rounded-full bg-secondary/10 px-3 py-1 text-[12px] font-bold text-secondary">
+          选择图片
+        </span>
+        <input
+          accept="image/*"
+          className="sr-only"
+          multiple
+          onChange={handleUpload}
+          type="file"
+        />
+      </label>
+
+      {images.length > 0 && (
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+          {images.map((image) => (
+            <div className="group relative overflow-hidden rounded-xl border border-outline-variant/30 bg-white dark:bg-[#1f1f1f]" key={image.id}>
+              <img
+                alt={image.name}
+                className="aspect-video w-full object-cover"
+                src={image.previewUrl}
+              />
+              <button
+                className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                onClick={() => removeImage(image.id)}
+                title="移除图片"
+                type="button"
+              >
+                <X className="h-4 w-4" />
               </button>
+              <div className="p-3">
+                <p className="truncate text-[12px] font-bold text-primary">{image.name}</p>
+                <p className="mt-1 text-[11px] text-on-surface-variant/70">{formatFileSize(image.size)}</p>
+              </div>
             </div>
-            <div className="w-[240px] h-[160px] shrink-0 flex items-center justify-center relative select-none hidden md:flex">
-              <svg viewBox="0 0 200 120" className="w-full h-full text-primary" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M60 20 h80 v80 h-80 z" className="fill-surface" />
-                <path d="M70 40 h60 M70 60 h60 M70 80 h40" strokeDasharray="3,3" />
-                <path d="M50 30 h10 v70 h-10 z" className="fill-surface" />
-                <circle cx="150" cy="30" r="12" className="fill-surface" />
-                <path d="M150 42 L150 55" />
-              </svg>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KnowledgeDetail({
+  entries,
+  geoProject,
+  geoArticleDrafts,
+  geoWorkflowState,
+  geoQuestionSets,
+  geoReports,
+  geoSourceDiscoveries,
+  indexStatus,
+  onBack,
+  onCreate,
+  onDelete,
+  onEdit,
+  onRefresh,
+  onStatusChange,
+  profile,
+  projectId,
+  setEntries,
+  setTotal,
+  total,
+}: {
+  entries: GeoAgentKnowledgeEntry[];
+  geoProject: GeoAgentGeoProject | null;
+  geoArticleDrafts: Record<'doubao' | 'deepseek', { consulting: GeoAgentGeoArticleDraft | null; review: GeoAgentGeoArticleDraft | null }>;
+  geoWorkflowState: GeoAgentWorkflowState | null;
+  geoQuestionSets: Record<'doubao' | 'deepseek', GeoAgentGeoQuestionSet | null>;
+  geoReports: Record<'doubao' | 'deepseek', GeoAgentGeoReport | null>;
+  geoSourceDiscoveries: Record<'doubao' | 'deepseek', GeoAgentGeoSourceDiscovery | null>;
+  indexStatus: GeoAgentKnowledgeIndexStatus | null;
+  onBack: () => void;
+  onCreate: () => void;
+  onDelete: () => void;
+  onEdit: () => void;
+  onRefresh: () => Promise<void>;
+  onStatusChange: (status: GeoAgentKnowledgeIndexStatus | null) => void;
+  profile: GeoAgentEnterpriseProfile | null;
+  projectId: string;
+  setEntries: React.Dispatch<React.SetStateAction<GeoAgentKnowledgeEntry[]>>;
+  setTotal: React.Dispatch<React.SetStateAction<number>>;
+  total: number;
+}) {
+  const enterpriseName = profile?.short_name || profile?.company_name || '企业知识库';
+  const healthReport = buildKnowledgeHealthReport(profile, entries, indexStatus);
+  const geoStages = buildGeoStagesFromWorkflow(geoWorkflowState)
+    ?? buildGeoStagesFromProject(geoProject, geoReports, geoQuestionSets, geoSourceDiscoveries, geoArticleDrafts);
+  const initialKeywords = geoProject?.initial_keywords ?? [];
+  const [isUploading, setIsUploading] = useState(false);
+  const [isReindexing, setIsReindexing] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [detailEntry, setDetailEntry] = useState<GeoAgentKnowledgeEntry | null>(null);
+  const [isMarkdownOpen, setIsMarkdownOpen] = useState(false);
+  const [isEntriesOpen, setIsEntriesOpen] = useState(false);
+  const uploadInputId = `knowledge-upload-${projectId || 'current'}`;
+
+  const handleDocumentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.currentTarget.files ?? []) as File[];
+    event.target.value = '';
+    if (!files.length || !projectId || !window.geoAgent?.createKnowledgeDraft) {
+      return;
+    }
+    setIsUploading(true);
+    setUploadError(null);
+    try {
+      await window.geoAgent.createKnowledgeDraft({
+        message: `请根据上传附件生成「${enterpriseName}」企业知识库更新草稿。`,
+        intent: 'update',
+        project_id: projectId,
+        skill_id: 'knowledge-base-ingest',
+        assets: await Promise.all(files.map(async (file) => ({
+          filename: file.name,
+          content_type: file.type || null,
+          content_base64: await fileToBase64(file),
+        }))),
+      });
+      setUploadError('已生成知识库更新草稿。请到智能助手中确认后再正式写入知识库。');
+      await onRefresh();
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : '文档上传或解析失败。');
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleReindex = async () => {
+    if (!projectId || !window.geoAgent?.reindexKnowledge) {
+      return;
+    }
+    setIsReindexing(true);
+    try {
+      onStatusChange(await window.geoAgent.reindexKnowledge(projectId));
+      await onRefresh();
+    } finally {
+      setIsReindexing(false);
+    }
+  };
+
+  const startPhaseTwo = () => {
+    if (!projectId) {
+      return;
+    }
+    window.dispatchEvent(new CustomEvent('geo-agent-open-view', { detail: { view: 'agent' } }));
+    window.setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('geo-agent-start-phase-two', { detail: { projectId } }));
+    }, 80);
+  };
+
+  return (
+    <div className="mx-auto flex min-h-full max-w-7xl flex-col gap-6 p-4 pb-16 sm:p-6 md:p-8 lg:p-xl">
+      <div className="flex flex-col gap-4 border-b border-outline-variant/20 pb-6 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <button
+            className="mb-3 inline-flex items-center gap-2 text-[12px] font-bold uppercase tracking-widest text-secondary transition-colors hover:text-primary"
+            onClick={onBack}
+            type="button"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            返回企业列表
+          </button>
+          <h1 className="font-heading text-[36px] font-bold leading-tight text-primary">
+            {enterpriseName} <span className="text-[24px] font-medium text-on-surface-variant/40">• GEO 资产体检</span>
+          </h1>
+          <p className="mt-2 max-w-4xl text-[14px] leading-relaxed text-on-surface-variant">
+            默认展示知识库健康评分、缺失项、阶段进度和资产状态；完整企业资料与原始知识条目可在弹窗中查看。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          <button
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#f7f7f5] px-5 py-3 text-[13px] font-bold text-primary transition-colors hover:bg-surface-container dark:bg-surface-variant/45"
+            onClick={onEdit}
+            type="button"
+          >
+            <Edit3 className="h-4 w-4" />
+            编辑知识库
+          </button>
+          <label
+            className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#f7f7f5] px-5 py-3 text-[13px] font-bold text-primary transition-colors hover:bg-surface-container dark:bg-surface-variant/45"
+            htmlFor={uploadInputId}
+          >
+            <Upload className="h-4 w-4" />
+            上传资料补充
+          </label>
+          <button
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#f7f7f5] px-5 py-3 text-[13px] font-bold text-primary transition-colors hover:bg-surface-container dark:bg-surface-variant/45"
+            onClick={() => setIsMarkdownOpen(true)}
+            type="button"
+          >
+            <FileText className="h-4 w-4" />
+            查看 Markdown 档案
+          </button>
+          <button
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#f7f7f5] px-5 py-3 text-[13px] font-bold text-primary transition-colors hover:bg-surface-container dark:bg-surface-variant/45"
+            onClick={() => setIsEntriesOpen(true)}
+            type="button"
+          >
+            <Eye className="h-4 w-4" />
+            查看知识条目
+          </button>
+          <button
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-transparent px-4 py-3 text-[13px] font-bold text-red-600 transition-colors hover:bg-red-500/10 dark:text-red-300"
+            onClick={onDelete}
+            type="button"
+          >
+            <Trash2 className="h-4 w-4" />
+            删除知识库
+          </button>
+        </div>
+      </div>
+
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[0.95fr_1.4fr]">
+        <div className="rounded-[22px] bg-[#f7f7f5] p-6 dark:bg-surface-variant/45">
+          <span className="text-[12px] font-bold uppercase tracking-widest text-on-surface-variant/70">Knowledge Health</span>
+          <div className="mt-4 flex items-end gap-3">
+            <span className="font-heading text-[64px] font-black leading-none text-primary">{healthReport.score}</span>
+            <span className="pb-2 font-mono text-[16px] font-bold text-on-surface-variant">/100</span>
+          </div>
+          <p className="mt-4 text-[15px] font-bold text-primary">{healthReport.verdict}</p>
+          <p className="mt-2 text-[13px] leading-relaxed text-on-surface-variant">
+            评分基于企业资料完整度、EEAT、关键词、RAG 索引和排行榜问题池准备度本地计算，仅用于指导下一步补充。
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {healthReport.dimensions.map((dimension) => (
+            <div key={dimension.key}>
+              <HealthDimensionCard dimension={dimension} />
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <SummaryCard icon={Database} label="知识条目" value={`${total} 条`} />
+        <SummaryCard icon={FileText} label="已索引" value={`${indexStatus?.indexed ?? 0} 条`} />
+        <SummaryCard icon={AlertCircle} label="待处理/失败" value={`${indexStatus?.pending ?? 0}/${indexStatus?.failed ?? 0}`} />
+        <SummaryCard icon={Image} label="文档资产" value={`${indexStatus?.asset_count ?? 0} 个`} />
+        <SummaryCard icon={Target} label="关键词状态" value={profile?.target_keywords ? '已录入' : '待补充'} />
+      </div>
+
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+        <div className="rounded-2xl bg-[#f7f7f5] p-5 dark:bg-surface-variant/45">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="font-heading text-[20px] font-bold text-primary">阶段一输出</h2>
+              <p className="mt-1 text-[13px] leading-relaxed text-on-surface-variant">
+                这里读取 GEO 项目状态层，不会写回企业事实知识库。
+              </p>
+            </div>
+            <span className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-bold ${geoProject?.knowledge_base_ready ? 'bg-secondary/12 text-secondary' : 'bg-amber-500/12 text-amber-700 dark:text-amber-300'}`}>
+              {geoProject?.knowledge_base_ready ? '可启动阶段二' : '继续采集'}
+            </span>
+          </div>
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="rounded-xl bg-white/60 p-4 dark:bg-[#1f1f1f]">
+              <span className="text-[11px] font-bold uppercase tracking-widest text-on-surface-variant/70">Current Phase</span>
+              <p className="mt-2 text-[15px] font-bold text-primary">
+                {formatCurrentPhase(geoProject?.current_phase)}
+              </p>
+              <p className="mt-1 text-[12px] leading-relaxed text-on-surface-variant">
+                {geoProject?.current_phase === 'ready_for_check'
+                  ? '知识库已具备基础资料和可检索索引，下一步可构建豆包/DeepSeek 排行榜问题池。'
+                  : '继续补充企业资料、附件和索引状态，避免后续自查缺少事实依据。'}
+              </p>
+              {geoProject?.current_phase === 'ready_for_check' && (
+                <button
+                  className="mt-3 inline-flex items-center gap-2 rounded-xl bg-secondary px-3 py-2 text-[12px] font-bold text-on-secondary transition-opacity hover:opacity-90"
+                  onClick={startPhaseTwo}
+                  type="button"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  启动问题池构建
+                </button>
+              )}
+            </div>
+            <div className="rounded-xl bg-white/60 p-4 dark:bg-[#1f1f1f]">
+              <span className="text-[11px] font-bold uppercase tracking-widest text-on-surface-variant/70">Platforms</span>
+              <p className="mt-2 truncate text-[15px] font-bold text-primary">
+                {(geoProject?.platforms ?? ['doubao', 'deepseek']).join(' / ')}
+              </p>
+              <p className="mt-1 text-[12px] leading-relaxed text-on-surface-variant">
+                阶段二会围绕目标平台生成排行榜/推荐类用户问题池，后续进入信源发现。
+              </p>
             </div>
           </div>
+        </div>
 
-          {/* Grid of enterprises */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
-            {filteredEnterprises.map((enterprise) => (
-              <div 
-                key={enterprise.id}
-                onClick={() => handleSelectEnterprise(enterprise.id)}
-                className="bg-[#f7f7f5] dark:bg-surface-variant/45 p-6 rounded-2xl  hover: hover:border-primary/35 transition-all cursor-pointer group relative flex flex-col gap-4"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-2xl bg-secondary/10 flex items-center justify-center text-secondary">
-                      <Building2 className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="text-[20px] font-bold text-primary font-heading group-hover:text-secondary transition-colors">
-                        {enterprise.name}
-                      </h3>
-                      <p className="text-[11px] font-mono text-on-surface-variant uppercase tracking-wider mt-0.5">
-                        {enterprise.industry}
-                      </p>
-                    </div>
-                  </div>
-                  <span className="text-[10px] font-bold uppercase border border-outline-variant/40 px-2 py-0.5 rounded-full text-on-surface-variant bg-surface">
-                    {enterprise.tag}
-                  </span>
-                </div>
-
-                <p className="text-[14px] text-on-surface-variant leading-relaxed flex-1 pt-1">
-                  {enterprise.desc}
-                </p>
-
-                {/* Grid Metadata metrics */}
-                <div className="grid grid-cols-3 gap-2 py-3 bg-[#f7f7f5] dark:bg-surface-variant/40 rounded-2xl px-4 text-center mt-2 border border-outline-variant/10">
-                  <div>
-                    <span className="block text-[11px] text-on-surface-variant font-medium">数据源</span>
-                    <span className="font-mono text-[14px] font-black text-primary mt-0.5 block">{enterprise.sourceCount} 个</span>
-                  </div>
-                  <div>
-                    <span className="block text-[11px] text-on-surface-variant font-medium">RAG字数</span>
-                    <span className="font-mono text-[14px] font-black text-primary mt-0.5 block">{enterprise.wordCount}</span>
-                  </div>
-                  <div>
-                    <span className="block text-[11px] text-on-surface-variant font-medium">图谱三元组</span>
-                    <span className="font-mono text-[14px] font-black text-secondary mt-0.5 block">{enterprise.graphTriples} 组</span>
-                  </div>
-                </div>
-
-                <div className="flex justify-between items-center pt-2 text-[12px] font-mono">
-                  <span className="text-on-surface-variant/60">更新于 {enterprise.lastUpdated}</span>
-                  <span className="text-secondary font-bold inline-flex items-center gap-1 group-hover:translate-x-1 transition-transform">
-                    进入 RAG 知识库管理
-                    <ChevronRight className="w-4 h-4" />
-                  </span>
-                </div>
-              </div>
-            ))}
-
-            {filteredEnterprises.length === 0 && (
-              <div className="col-span-2 py-16 text-center border-2 border-dashed border-outline-variant/60 rounded-2xl bg-[#f7f7f5] dark:bg-surface-variant/20">
-                <p className="text-on-surface-variant text-[14px]">未搜索到相关企业数据资产库。</p>
-              </div>
+        <div className="rounded-2xl bg-[#f7f7f5] p-5 dark:bg-surface-variant/45">
+          <h2 className="font-heading text-[20px] font-bold text-primary">初始预设关键词</h2>
+          <p className="mt-1 text-[13px] leading-relaxed text-on-surface-variant">
+            优先使用用户录入关键词；没有关键词时按地区、行业和企业主体生成，作为 GEO 项目的阶段一输出。
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {initialKeywords.length > 0 ? (
+              initialKeywords.map((keyword) => (
+                <span className="max-w-full truncate rounded-full bg-white/70 px-3 py-1.5 text-[12px] font-bold text-primary dark:bg-[#1f1f1f]" key={keyword}>
+                  {keyword}
+                </span>
+              ))
+            ) : (
+              <span className="rounded-xl bg-white/60 px-4 py-3 text-[13px] text-on-surface-variant dark:bg-[#1f1f1f]">
+                暂无初始关键词，请在企业资料中补充目标关键词或业务区域。
+              </span>
             )}
           </div>
-        </>
-      ) : (
-        <>
-          {/* Detailed Enterprise Asset View */}
-          <div className="flex flex-col gap-6 animate-in fade-in duration-300">
-            {/* Breadcrumb Navigation */}
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4 border-b border-outline-variant/20 pb-6">
-              <div className="space-y-2">
-                <button 
-                  onClick={() => setSelectedEnterpriseId(null)}
-                  className="inline-flex items-center gap-2 text-[12px] font-bold text-secondary uppercase tracking-widest hover:text-primary transition-colors group mb-1"
-                >
-                  <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-                  返回企业列表
-                </button>
-                <div className="flex items-baseline gap-3">
-                  <h1 className="text-[36px] font-bold text-primary font-heading tracking-tight leading-tight">
-                    {selectedEnterprise.name} <span className="text-on-surface-variant/40 text-[24px] font-medium">• 知识库</span>
-                  </h1>
-                </div>
-                <p className="text-[14px] text-on-surface-variant max-w-4xl">
-                  当前处于 <span className="font-bold text-primary">{selectedEnterprise.tag}</span> 专属 RAG 分割控制区。管理源头文章接入、模型逆向白名单信源切片。
-                </p>
-              </div>
-              <div className="flex gap-4 shrink-0">
-                <button 
-                  onClick={() => setSelectedEnterpriseId(null)}
-                  className="px-5 py-2.5 border-transparent bg-[#f7f7f5] dark:bg-surface-variant/45 text-[11px] font-bold uppercase tracking-wider text-primary hover:bg-surface-container transition-colors rounded-sm bg-[#f7f7f5] dark:bg-surface-variant/45 "
-                >
-                  更换企业
-                </button>
-                <button className="px-5 py-2.5 bg-secondary text-on-secondary hover:opacity-90 text-[11px] font-bold uppercase tracking-wider hover:opacity-90 transition-opacity  flex items-center gap-2 rounded-sm">
-                  <Plus className="w-4 h-4" />
-                  导入新物料
-                </button>
-              </div>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+        <label className="flex min-h-[150px] cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-outline-variant/50 bg-[#f7f7f5] px-6 py-8 text-center transition-colors hover:border-secondary hover:bg-secondary/5 dark:bg-surface-variant/35">
+          <Upload className="mb-3 h-7 w-7 text-secondary" />
+          <span className="text-[14px] font-bold text-primary">
+            {isUploading ? '正在生成更新草稿...' : '上传 Markdown / PDF / Word 文档'}
+          </span>
+          <span className="mt-2 max-w-2xl text-[13px] leading-relaxed text-on-surface-variant">
+            文档会先生成知识库更新草稿，确认后再写入当前企业并建立 LanceDB 向量索引。
+          </span>
+          <input
+            accept=".md,.markdown,.txt,.pdf,.doc,.docx,text/markdown,text/plain,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            className="sr-only"
+            disabled={isUploading}
+            id={uploadInputId}
+            multiple
+            onChange={handleDocumentUpload}
+            type="file"
+          />
+          {uploadError && <span className="mt-3 text-[12px] font-semibold text-secondary">{uploadError}</span>}
+        </label>
+
+        <div className="min-w-0 rounded-2xl bg-[#f7f7f5] p-5 dark:bg-surface-variant/45">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="font-heading text-[18px] font-bold text-primary">本地 RAG 索引</h2>
+              <p className="mt-1 truncate text-[12px] leading-relaxed text-on-surface-variant">
+                {indexStatus
+                  ? `${indexStatus.embedding_backend} / ${indexStatus.vector_backend} / ${indexStatus.embedding_model}`
+                  : '等待索引状态'}
+              </p>
             </div>
-
-            {/* Enterprise Quick Metrics */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl p-5">
-                <span className="text-[11px] text-on-surface-variant/70 uppercase tracking-wider block">累计存储规模</span>
-                <span className="font-mono text-[22px] font-black text-primary mt-1 block">{selectedEnterprise.wordCount}</span>
-              </div>
-              <div className="bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl p-5">
-                <span className="text-[11px] text-on-surface-variant/70 uppercase tracking-wider block">关系图谱实体</span>
-                <span className="font-mono text-[22px] font-black text-primary mt-1 block">{selectedEnterprise.graphEntities} 个</span>
-              </div>
-              <div className="bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl p-5">
-                <span className="text-[11px] text-on-surface-variant/70 uppercase tracking-wider block">图谱关联词三元组</span>
-                <span className="font-mono text-[22px] font-black text-secondary mt-1 block">{selectedEnterprise.graphTriples} 组</span>
-              </div>
-              <div className="bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl p-5">
-                <span className="text-[11px] text-on-surface-variant/70 uppercase tracking-wider block">大模型 RAG 覆盖深度</span>
-                <span className="font-mono text-[22px] font-black text-emerald-600 mt-1 block">{selectedEnterprise.ragDepth}</span>
-              </div>
-            </div>
-
-            {/* Data Sources Grid */}
-            <div>
-              <h2 className="text-[20px] font-bold text-primary font-heading mb-4 flex items-center gap-2">
-                <Layers className="w-5 h-5 text-secondary" />
-                已装配的核心物料数据源
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                {selectedEnterprise.sources.map((source, index) => (
-                  <SourceCard 
-                    key={index}
-                    icon={source.icon}
-                    title={source.title}
-                    desc={source.desc}
-                    status={source.status}
-                    count={source.count}
-                    color={source.color}
-                    statusColor={source.statusColor}
-                    iconColor={source.iconColor}
-                    percent={source.percent}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* Bottom Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-4">
-              
-              {/* Queue */}
-              <div className="lg:col-span-2 bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl  flex flex-col">
-                <div className="p-6 border-b border-outline-variant/60 flex justify-between items-center">
-                  <h3 className="text-[20px] font-bold text-primary font-heading flex items-center gap-2">
-                    <Database className="w-5 h-5 text-secondary" />
-                    分块索引入库队列及 RAG 语义重组自检
-                  </h3>
-                  <span className="font-mono text-[10px] uppercase font-bold text-secondary bg-secondary/10 px-2 py-0.5 rounded-2xl">实时监听</span>
-                </div>
-                <div className="flex-1 divide-y divide-outline-variant/10">
-                  {selectedEnterprise.queue.map((item, index) => (
-                    <QueueItem 
-                      key={index}
-                      icon={item.icon}
-                      title={item.title}
-                      sub={item.sub}
-                      progress={item.progress}
-                      done={item.done}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              {/* Graphical EEAT side card */}
-              <div className="bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl  p-6 flex flex-col gap-5">
-                <div className="border-b border-outline-variant/15 pb-3">
-                  <h3 className="text-[20px] font-bold text-primary font-heading flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-secondary" />
-                    企业白盒 EEAT 重塑底盘
-                  </h3>
-                </div>
-                
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center pb-2 border-b border-outline-variant/10">
-                    <span className="text-[13px] text-on-surface-variant font-medium">行业规范分类</span>
-                    <span className="font-sans text-[13px] font-semibold text-primary">{selectedEnterprise.tag}</span>
-                  </div>
-                  <div className="flex justify-between items-center pb-2 border-b border-outline-variant/10">
-                    <span className="text-[13px] text-on-surface-variant font-medium">可用图谱实体数</span>
-                    <span className="font-mono text-[13px] font-bold text-primary">{selectedEnterprise.graphEntities} 个</span>
-                  </div>
-                  <div className="flex justify-between items-center pb-2 border-b border-outline-variant/10">
-                    <span className="text-[13px] text-on-surface-variant font-medium">已解析关联通路数</span>
-                    <span className="font-mono text-[13px] font-bold text-primary">{selectedEnterprise.graphTriples} 组</span>
-                  </div>
-                  <div className="flex justify-between items-center pb-2">
-                    <span className="text-[13px] text-on-surface-variant font-medium">EEAT 完整度评定</span>
-                    <span className="font-mono text-[13px] font-bold text-emerald-600">极高 (96/100)</span>
-                  </div>
-                </div>
-
-                <div className="mt-auto pt-4">
-                  <div className="w-full h-36 rounded-2xl bg-surface relative overflow-hidden border-transparent bg-[#f7f7f5] dark:bg-surface-variant/45 flex items-center justify-center pointer-events-none p-4 text-center">
-                    <div className="absolute inset-0 bg-secondary/10 opacity-30" />
-                    <div className="relative z-10 flex flex-col items-center">
-                      <ShieldCheck className="w-10 h-10 text-secondary mb-2" />
-                      <span className="text-[11px] font-bold tracking-widest uppercase text-primary">RAG 真实数据安全锁</span>
-                      <p className="text-[10px] text-on-surface-variant/70 mt-1 max-w-[200px]">已启用隔离存储，非商业用途外部绝对无法逆向抓取</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-            </div>
-
+            <button
+              className="inline-flex h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl bg-secondary px-3 py-2 text-[12px] font-bold text-on-secondary transition-opacity hover:opacity-90 disabled:opacity-50"
+              disabled={isReindexing}
+              onClick={handleReindex}
+              type="button"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isReindexing ? 'animate-spin' : ''}`} />
+              重建索引
+            </button>
           </div>
-        </>
-      )}
-
-    </div>
-  );
-}
-
-function SourceCard({ icon: Icon, title, desc, status, count, color, statusColor, iconColor, percent }: any) {
-  return (
-    <div className="bg-[#f7f7f5] dark:bg-surface-variant/45 p-6 rounded-2xl  flex flex-col gap-4 relative overflow-hidden group hover: transition-all">
-      <div className="flex items-start gap-3">
-        <div className="p-2.5 rounded-2xl bg-surface border border-outline-variant/20 shrink-0">
-          <Icon className={cn("w-5 h-5", iconColor)} />
-        </div>
-        <div>
-          <h3 className="text-[17px] font-bold text-primary font-heading group-hover:text-secondary transition-colors leading-tight">{title}</h3>
-          <span className="font-mono text-[11px] text-on-surface-variant/70 mt-1 block">{count}</span>
-        </div>
-      </div>
-      <p className="text-[14px] text-on-surface-variant flex-1 leading-relaxed">{desc}</p>
-      
-      <div className="pt-4 flex items-center justify-between border-t border-outline-variant/10">
-        <div className="flex items-center gap-2">
-          <div className={cn("w-2 h-2 rounded-full", statusColor)} />
-          <span className="font-mono text-[12px] text-on-surface font-semibold">{status}</span>
-        </div>
-        {percent && (
-          <span className="font-mono text-[11px] text-secondary font-bold">{percent}%</span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function QueueItem({ icon: Icon, title, sub, progress, done }: any) {
-  return (
-    <div className={cn("px-6 py-4.5 flex items-center justify-between hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/40 transition-colors", done && "opacity-65")}>
-      <div className="flex items-center gap-4">
-        <div className="w-10 h-10 rounded-2xl bg-surface border-transparent bg-[#f7f7f5] dark:bg-surface-variant/45 flex items-center justify-center">
-          <Icon className="w-5 h-5 text-on-surface-variant" />
-        </div>
-        <div>
-          <p className="text-[14px] font-bold text-primary font-heading leading-tight">{title}</p>
-          <p className="font-mono text-[11px] text-on-surface-variant mt-1">{sub}</p>
-        </div>
-      </div>
-      <div className="flex items-center gap-6">
-        {progress ? (
-           <>
-            <div className="w-32 h-1.5 bg-surface-container rounded-full overflow-hidden hidden sm:block">
-              <div className="h-full bg-secondary" style={{ width: `${progress}%` }} />
+          <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+            <Metric label="待处理" value={`${indexStatus?.pending ?? 0}`} />
+            <Metric label="已索引" value={`${indexStatus?.indexed ?? 0}`} accent />
+            <Metric label="失败" value={`${indexStatus?.failed ?? 0}`} />
+          </div>
+          {indexStatus?.assets && indexStatus.assets.length > 0 && (
+            <div className="mt-4 space-y-2">
+              {indexStatus.assets.slice(0, 4).map((asset) => (
+                <div className="flex items-center justify-between gap-3 rounded-xl bg-white/55 px-3 py-2 text-[12px] dark:bg-[#1f1f1f]" key={asset.id}>
+                  <span className="min-w-0 truncate font-semibold text-primary">{asset.filename}</span>
+                  <span className={`shrink-0 truncate ${asset.status === 'failed' ? 'text-red-600' : 'text-secondary'}`}>{asset.status}</span>
+                </div>
+              ))}
             </div>
-            <span className="font-mono text-[13px] text-secondary font-bold w-10 text-right">{progress}%</span>
-           </>
-        ) : (
-          <span className="font-mono text-[11px] font-bold text-on-surface-variant bg-[#f7f7f5] dark:bg-surface-variant/45 px-2 py-1 rounded-2xl">COMPLETED</span>
-        )}
+          )}
+        </div>
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1fr]">
+        <div className="rounded-2xl bg-[#f7f7f5] p-5 dark:bg-surface-variant/45">
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h2 className="font-heading text-[20px] font-bold text-primary">待补充内容</h2>
+            <span className="rounded-full bg-white/65 px-3 py-1 text-[11px] font-bold text-on-surface-variant dark:bg-[#1f1f1f]">
+              {healthReport.gaps.length} 项
+            </span>
+          </div>
+          {healthReport.gaps.length > 0 ? (
+            <div className="space-y-2">
+              {healthReport.gaps.slice(0, 8).map((gap) => (
+                <div key={gap.label}>
+                  <GapItemCard
+                    gap={gap}
+                    onEdit={onEdit}
+                    onUpload={() => document.getElementById(uploadInputId)?.click()}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-xl bg-white/55 p-4 text-[13px] leading-relaxed text-on-surface-variant dark:bg-[#1f1f1f]">
+              当前基础资料较完整，可以进入排行榜问题池与信源发现流程。
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-2xl bg-[#f7f7f5] p-5 dark:bg-surface-variant/45">
+          <h2 className="mb-4 font-heading text-[20px] font-bold text-primary">GEO 优化阶段</h2>
+          <div className="space-y-2">
+            {geoStages.map((stage, index) => (
+              <div key={stage.label}>
+                <GeoStageRow index={index + 1} stage={stage} />
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-[#f7f7f5] p-5 dark:bg-surface-variant/45">
+        <div>
+          <h2 className="font-heading text-[18px] font-bold text-primary">完整内容查看</h2>
+          <p className="mt-1 text-[13px] text-on-surface-variant">
+            原始知识条目和企业档案仍完整保留，只是不在体检页主界面铺开。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button className="rounded-xl bg-white/70 px-4 py-2.5 text-[13px] font-bold text-primary hover:bg-white dark:bg-[#1f1f1f]" onClick={() => setIsMarkdownOpen(true)} type="button">
+            查看 Markdown 企业档案
+          </button>
+          <button className="rounded-xl bg-secondary px-4 py-2.5 text-[13px] font-bold text-on-secondary hover:opacity-90" onClick={() => setIsEntriesOpen(true)} type="button">
+            查看 {entries.length} 条知识条目
+          </button>
+        </div>
+      </div>
+
+      {isMarkdownOpen && profile && (
+        <MarkdownProfileDialog markdown={buildProfileMarkdown(profile)} onClose={() => setIsMarkdownOpen(false)} title={`${enterpriseName} Markdown 企业档案`} />
+      )}
+      {isEntriesOpen && (
+        <KnowledgeEntriesDialog
+          entries={entries}
+          onClose={() => setIsEntriesOpen(false)}
+          onSelectEntry={setDetailEntry}
+        />
+      )}
+      {detailEntry && (
+        <KnowledgeEntryDialog entry={detailEntry} onClose={() => setDetailEntry(null)} />
+      )}
+    </div>
+  );
+}
+
+function DeleteProfileDialog({
+  confirmation,
+  isDeleting,
+  onCancel,
+  onChange,
+  onDelete,
+  profile,
+}: {
+  confirmation: string;
+  isDeleting: boolean;
+  onCancel: () => void;
+  onChange: (value: string) => void;
+  onDelete: () => void;
+  profile: GeoAgentEnterpriseProfile;
+}) {
+  const canDelete = confirmation === DELETE_CONFIRMATION_TEXT && !isDeleting;
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/45 px-4 py-8">
+      <div className="w-full max-w-[560px] rounded-2xl bg-white p-6 shadow-2xl dark:bg-[#1f1f1f]">
+        <div className="flex items-start gap-3">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-red-500/10 text-red-600 dark:text-red-300">
+            <Trash2 className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="font-heading text-[22px] font-bold text-primary">删除企业知识库</h2>
+            <p className="mt-2 text-[14px] leading-relaxed text-on-surface-variant">
+              此操作会永久删除 <strong className="text-primary">{profile.short_name || profile.company_name}</strong> 的企业资料和全部知识条目，无法撤销。
+            </p>
+          </div>
+        </div>
+        <label className="mt-5 block">
+          <span className="mb-2 block text-[12px] font-bold text-primary">
+            请输入 `{DELETE_CONFIRMATION_TEXT}` 以确认删除
+          </span>
+          <input
+            className="block w-full min-w-0 rounded-xl border border-outline-variant/40 bg-[#f7f7f5] px-4 py-3 text-[14px] text-primary outline-none transition-colors focus:border-red-500 dark:bg-[#111]"
+            onChange={(event) => onChange(event.target.value)}
+            value={confirmation}
+          />
+        </label>
+        <div className="mt-6 flex justify-end gap-3">
+          <button
+            className="rounded-xl bg-[#f7f7f5] px-4 py-2.5 text-[13px] font-bold text-primary transition-colors hover:bg-surface-container dark:bg-surface-variant/45"
+            onClick={onCancel}
+            type="button"
+          >
+            取消
+          </button>
+          <button
+            className="rounded-xl bg-red-600 px-4 py-2.5 text-[13px] font-bold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={!canDelete}
+            onClick={onDelete}
+            type="button"
+          >
+            {isDeleting ? '正在删除' : '确认删除'}
+          </button>
+        </div>
       </div>
     </div>
   );
+}
+
+function HealthDimensionCard({ dimension }: { dimension: KnowledgeHealthDimension }) {
+  return (
+    <div className="min-w-0 rounded-2xl bg-[#f7f7f5] p-4 dark:bg-surface-variant/45">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-[13px] font-bold text-primary">{dimension.label}</h3>
+          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-on-surface-variant">{dimension.reason}</p>
+        </div>
+        <span className={`shrink-0 rounded-full px-2.5 py-1 font-mono text-[12px] font-black ${statusClassName(dimension.status)}`}>
+          {dimension.score}
+        </span>
+      </div>
+      <div className="mt-3 h-1.5 rounded-full bg-outline-variant/20">
+        <div className="h-full rounded-full bg-secondary" style={{ width: `${dimension.score}%` }} />
+      </div>
+      {dimension.missingItems.length > 0 && (
+        <p className="mt-2 truncate text-[11px] text-on-surface-variant/70">
+          待补充：{dimension.missingItems.join('、')}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function GapItemCard({
+  gap,
+  onEdit,
+  onUpload,
+}: {
+  gap: KnowledgeGapItem;
+  onEdit: () => void;
+  onUpload: () => void;
+}) {
+  const priorityLabel = gap.priority === 'high' ? '高优先级' : gap.priority === 'medium' ? '中优先级' : '可补充';
+  return (
+    <div className="rounded-xl bg-white/60 p-3 dark:bg-[#1f1f1f]">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-[13px] font-bold text-primary">{gap.label}</h3>
+          <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-on-surface-variant">{gap.actionPrompt}</p>
+        </div>
+        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${gap.priority === 'high' ? 'bg-red-500/10 text-red-600 dark:text-red-300' : 'bg-secondary/10 text-secondary'}`}>
+          {priorityLabel}
+        </span>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button className="rounded-lg bg-secondary/10 px-3 py-1.5 text-[12px] font-bold text-secondary hover:bg-secondary/15" onClick={onEdit} type="button">
+          去编辑
+        </button>
+        <button className="rounded-lg bg-surface-container px-3 py-1.5 text-[12px] font-bold text-primary hover:bg-white dark:hover:bg-[#2a2a2a]" onClick={onUpload} type="button">
+          上传附件补充
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GeoStageRow({ index, stage }: { index: number; stage: GeoStageStatus }) {
+  const isUsable = stage.status === '可用';
+  const isProgress = stage.status === '进行中';
+  const isDeferred = stage.status === '已暂缓';
+  return (
+    <div className="flex items-start gap-3 rounded-xl bg-white/60 px-3 py-3 dark:bg-[#1f1f1f]">
+      <div className={`mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-[12px] font-black ${isUsable ? 'bg-secondary text-on-secondary' : isProgress ? 'bg-secondary/15 text-secondary' : isDeferred ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'bg-surface-container text-on-surface-variant'}`}>
+        {isUsable ? <CheckCircle2 className="h-4 w-4" /> : index}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="truncate text-[13px] font-bold text-primary">{stage.label}</h3>
+          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${isProgress ? 'bg-secondary/10 text-secondary' : isDeferred ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'bg-surface-container text-on-surface-variant'}`}>
+            {stage.status}
+          </span>
+        </div>
+        <p className="mt-1 line-clamp-2 text-[12px] leading-relaxed text-on-surface-variant">{stage.description}</p>
+      </div>
+    </div>
+  );
+}
+
+function MarkdownProfileDialog({
+  markdown,
+  onClose,
+  title,
+}: {
+  markdown: string;
+  onClose: () => void;
+  title: string;
+}) {
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/35 px-4 py-8" onClick={onClose} role="presentation">
+      <div className="flex max-h-[86vh] w-full max-w-4xl flex-col rounded-2xl bg-white p-5 shadow-2xl dark:bg-[#1f1f1f]" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4 border-b border-outline-variant/20 pb-4">
+          <div className="min-w-0">
+            <h2 className="font-heading text-[20px] font-bold leading-snug text-primary">{title}</h2>
+            <p className="mt-1 text-[12px] text-on-surface-variant">由结构化企业 profile 实时生成，方便核对完整档案。</p>
+          </div>
+          <button className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-container hover:text-primary" onClick={onClose} type="button">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <pre className="mt-4 min-h-0 overflow-y-auto whitespace-pre-wrap rounded-xl bg-[#f7f7f5] p-4 font-mono text-[12px] leading-relaxed text-primary dark:bg-[#111]">
+          {markdown}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function KnowledgeEntriesDialog({
+  entries,
+  onClose,
+  onSelectEntry,
+}: {
+  entries: GeoAgentKnowledgeEntry[];
+  onClose: () => void;
+  onSelectEntry: (entry: GeoAgentKnowledgeEntry) => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/35 px-4 py-8" onClick={onClose} role="presentation">
+      <div className="flex max-h-[86vh] w-full max-w-5xl flex-col rounded-2xl bg-white p-5 shadow-2xl dark:bg-[#1f1f1f]" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4 border-b border-outline-variant/20 pb-4">
+          <div>
+            <h2 className="font-heading text-[20px] font-bold text-primary">原始知识条目</h2>
+            <p className="mt-1 text-[12px] text-on-surface-variant">共 {entries.length} 条，点击单条可查看完整内容。</p>
+          </div>
+          <button className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-container hover:text-primary" onClick={onClose} type="button">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="mt-4 grid min-h-0 gap-3 overflow-y-auto pr-1 md:grid-cols-2">
+          {entries.length > 0 ? entries.map((entry) => (
+            <button className="min-w-0 rounded-xl bg-[#f7f7f5] p-4 text-left transition-colors hover:bg-surface-container dark:bg-surface-variant/45" key={entry.id} onClick={() => onSelectEntry(entry)} type="button">
+              <div className="flex items-start justify-between gap-3">
+                <h3 className="line-clamp-2 font-heading text-[15px] font-bold text-primary">{entry.title}</h3>
+                <span className="shrink-0 rounded-full bg-secondary/10 px-2 py-0.5 font-mono text-[10px] font-bold text-secondary">{entry.embedding_status}</span>
+              </div>
+              <p className="mt-2 line-clamp-3 text-[12px] leading-relaxed text-on-surface-variant">{entry.content}</p>
+              <span className="mt-3 block truncate font-mono text-[10px] text-on-surface-variant/60">{entry.source_type} · chunk {entry.chunk_index}</span>
+            </button>
+          )) : (
+            <div className="rounded-xl border border-dashed border-outline-variant/50 p-8 text-center text-[13px] text-on-surface-variant md:col-span-2">
+              暂无知识条目。
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function KnowledgeEntryDialog({
+  entry,
+  onClose,
+}: {
+  entry: GeoAgentKnowledgeEntry;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-[90] flex items-center justify-center bg-black/35 px-4 py-8"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        className="flex max-h-[86vh] w-full max-w-3xl flex-col rounded-2xl bg-white p-5 shadow-2xl dark:bg-[#1f1f1f]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-outline-variant/20 pb-4">
+          <div className="min-w-0">
+            <h2 className="font-heading text-[20px] font-bold leading-snug text-primary">
+              {entry.title}
+            </h2>
+            <p className="mt-2 truncate font-mono text-[11px] text-on-surface-variant/70">
+              {entry.source_type} · chunk {entry.chunk_index} · {entry.created_at}
+            </p>
+          </div>
+          <button
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-container hover:text-primary"
+            onClick={onClose}
+            type="button"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="mt-4 min-h-0 overflow-y-auto pr-1">
+          <p className="whitespace-pre-wrap text-[14px] leading-relaxed text-on-surface-variant">
+            {entry.content}
+          </p>
+          {entry.error_message && (
+            <div className="mt-4 rounded-xl bg-red-500/10 p-3 text-[12px] font-semibold text-red-600 dark:text-red-300">
+              {entry.error_message}
+            </div>
+          )}
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2 border-t border-outline-variant/20 pt-4">
+          <span className="rounded-full bg-secondary/10 px-3 py-1 text-[11px] font-bold text-secondary">
+            {entry.embedding_status}
+          </span>
+          <span className="max-w-full truncate rounded-full bg-surface-container px-3 py-1 text-[11px] font-bold text-on-surface-variant">
+            {entry.id}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProfileField({
+  field,
+  onChange,
+  value,
+}: {
+  field: {
+    key: keyof ProfileFormState;
+    label: string;
+    placeholder: string;
+    type?: 'input' | 'textarea';
+    rows?: number;
+    required?: boolean;
+  };
+  onChange: (value: string) => void;
+  value: string;
+}) {
+  const className = 'w-full rounded-xl border border-outline-variant/40 bg-white px-4 py-3 text-[14px] leading-relaxed text-primary outline-none transition-colors placeholder:text-on-surface-variant/45 focus:border-secondary dark:bg-[#1f1f1f]';
+  return (
+    <label className={field.type === 'textarea' ? 'md:col-span-2' : ''}>
+      <span className="mb-2 block text-[12px] font-bold text-primary">
+        {field.label}
+        {field.required && <span className="ml-1 text-secondary">*</span>}
+      </span>
+      {field.type === 'textarea' ? (
+        <textarea
+          className={`${className} resize-y`}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={field.placeholder}
+          rows={field.rows ?? 4}
+          value={value}
+        />
+      ) : (
+        <input
+          className={className}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={field.placeholder}
+          value={value}
+        />
+      )}
+    </label>
+  );
+}
+
+function Metric({ accent, label, value }: { accent?: boolean; label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <span className="block truncate text-[11px] font-medium text-on-surface-variant">{label}</span>
+      <span className={`mt-0.5 block truncate font-mono text-[14px] font-black ${accent ? 'text-secondary' : 'text-primary'}`}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function SummaryCard({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded-2xl bg-[#f7f7f5] p-5 dark:bg-surface-variant/45">
+      <Icon className="mb-3 h-5 w-5 text-secondary" />
+      <span className="block truncate text-[11px] uppercase tracking-wider text-on-surface-variant/70">{label}</span>
+      <span className="mt-1 block truncate font-mono text-[22px] font-black text-primary">{value}</span>
+    </div>
+  );
+}
+
+function buildKnowledgeHealthReport(
+  profile: GeoAgentEnterpriseProfile | null,
+  entries: GeoAgentKnowledgeEntry[],
+  indexStatus: GeoAgentKnowledgeIndexStatus | null
+): KnowledgeHealthReport {
+  const profileData = profile ?? ({} as GeoAgentEnterpriseProfile);
+  const scoreFieldGroup = (fields: Array<keyof GeoAgentEnterpriseProfile>) => {
+    if (!fields.length) {
+      return 0;
+    }
+    const filled = fields.filter((field) => hasText(profileData[field])).length;
+    return Math.round((filled / fields.length) * 100);
+  };
+
+  const dimensions: KnowledgeHealthDimension[] = [
+    makeDimension({
+      key: 'identity',
+      label: '基础资料完整度',
+      score: scoreFieldGroup(['company_name', 'short_name', 'industry', 'main_business', 'business_regions', 'customer_service_phone']),
+      weight: 0.18,
+      reason: '企业实体、行业、业务和区域是 GEO 召回的基础锚点。',
+      missingItems: missingLabels(profileData, [
+        ['company_name', '公司名称'],
+        ['industry', '所属行业'],
+        ['main_business', '主营业务'],
+        ['business_regions', '业务区域'],
+      ]),
+      recommendedAction: '补齐公司身份、主营业务和服务区域。',
+    }),
+    makeDimension({
+      key: 'service',
+      label: '产品/服务结构化程度',
+      score: scoreFieldGroup(['products_services', 'product_features', 'brand_authorization_pricing', 'core_advantages']),
+      weight: 0.16,
+      reason: '产品分类、卖点和价格区间决定后续文章与榜单回答的可信度。',
+      missingItems: missingLabels(profileData, [
+        ['products_services', '产品/服务介绍'],
+        ['product_features', '产品/服务特点'],
+        ['brand_authorization_pricing', '品牌授权与客单价'],
+        ['core_advantages', '核心优势'],
+      ]),
+      recommendedAction: '按服务分类补充卖点、套餐、价格和差异化优势。',
+    }),
+    makeDimension({
+      key: 'pain',
+      label: '用户痛点与场景覆盖',
+      score: scoreFieldGroup(['user_pain_points', 'current_pain_points', 'detailed_intro']),
+      weight: 0.14,
+      reason: '用户画像和真实场景越清楚，模型越容易生成可推荐的回答。',
+      missingItems: missingLabels(profileData, [
+        ['user_pain_points', '用户痛点'],
+        ['current_pain_points', '目前痛点/现状'],
+        ['detailed_intro', '企业详细介绍'],
+      ]),
+      recommendedAction: '补充用户画像、决策顾虑、使用场景和当前获客问题。',
+    }),
+    makeDimension({
+      key: 'eeat',
+      label: 'EEAT 信任背书',
+      score: scoreFieldGroup(['trust_endorsements', 'cases', 'official_website', 'official_media']),
+      weight: 0.18,
+      reason: '资质、授权、案例和官方信源是进入推荐榜单的重要支撑。',
+      missingItems: missingLabels(profileData, [
+        ['trust_endorsements', '信任背书'],
+        ['cases', '行业/客户案例'],
+        ['official_website', '官方网站'],
+        ['official_media', '官方自媒体'],
+      ]),
+      recommendedAction: '补充资质荣誉、客户案例、媒体账号和官网信源。',
+    }),
+    makeDimension({
+      key: 'keywords',
+      label: '关键词与长尾词覆盖',
+      score: Math.min(100, (keywordCount(profileData.target_keywords) >= 3 ? 70 : keywordCount(profileData.target_keywords) * 25) + (hasText(profileData.generated_long_tail_keywords) ? 30 : 0)),
+      weight: 0.14,
+      reason: '目标关键词和长尾问题决定阶段二自查与阶段五内容矩阵方向。',
+      missingItems: [
+        ...(keywordCount(profileData.target_keywords) > 0 ? [] : ['目标关键词']),
+        ...(hasText(profileData.generated_long_tail_keywords) ? [] : ['长尾语义词']),
+      ],
+      recommendedAction: '补充地区 + 行业 + 主体关键词，并生成长尾用户问题。',
+    }),
+    makeDimension({
+      key: 'rag',
+      label: 'RAG 向量化状态',
+      score: buildRagScore(entries, indexStatus),
+      weight: 0.12,
+      reason: '知识条目完成向量化后，智能助手和文章生成才能稳定引用企业资料。',
+      missingItems: [
+        ...(entries.length > 0 ? [] : ['知识条目']),
+        ...((indexStatus?.failed ?? 0) > 0 ? ['失败条目'] : []),
+        ...((indexStatus?.pending ?? 0) > 0 ? ['待处理条目'] : []),
+      ],
+      recommendedAction: '上传资料并重建索引，确保条目完成向量化。',
+    }),
+    makeDimension({
+      key: 'geo_ready',
+      label: '排行榜问题池准备度',
+      score: Math.round((scoreFieldGroup(['company_name', 'industry', 'main_business', 'detailed_intro', 'products_services', 'trust_endorsements', 'target_keywords']) + buildRagScore(entries, indexStatus)) / 2),
+      weight: 0.08,
+      reason: '阶段二需要企业背景、关键词和可检索资料共同支撑。',
+      missingItems: [],
+      recommendedAction: '知识库达到 70 分以上后，可启动豆包/DeepSeek 排行榜问题池构建。',
+    }),
+  ];
+
+  const score = Math.round(dimensions.reduce((sum, dimension) => sum + dimension.score * dimension.weight, 0));
+  const gaps = buildGapItems(profileData, dimensions);
+  return {
+    score,
+    verdict: score >= 80
+      ? '知识库已具备进入排行榜问题池构建的基础条件。'
+      : score >= 60
+        ? '知识库已可用，但建议先补齐高优先级缺口。'
+        : '知识库仍偏薄，建议先完成企业资料与信任背书补充。',
+    dimensions,
+    gaps,
+  };
+}
+
+function makeDimension(input: Omit<KnowledgeHealthDimension, 'status'>): KnowledgeHealthDimension {
+  return {
+    ...input,
+    score: clampScore(input.score),
+    status: scoreToStatus(input.score),
+  };
+}
+
+function buildGapItems(
+  profile: GeoAgentEnterpriseProfile,
+  dimensions: KnowledgeHealthDimension[]
+): KnowledgeGapItem[] {
+  const priorityMap: Record<string, KnowledgeGapItem['priority']> = {
+    公司名称: 'high',
+    主营业务: 'high',
+    企业详细介绍: 'high',
+    '产品/服务介绍': 'high',
+    用户痛点: 'high',
+    信任背书: 'high',
+    目标关键词: 'high',
+    '行业/客户案例': 'medium',
+    业务区域: 'medium',
+    '品牌授权与客单价': 'medium',
+    官方自媒体: 'medium',
+    官方网站: 'medium',
+    品牌故事: 'low',
+    图片说明: 'low',
+    其他信息补充: 'low',
+  };
+  const fromDimensions = dimensions.flatMap((dimension) => dimension.missingItems);
+  const explicit = missingLabels(profile, [
+    ['brand_story', '品牌故事'],
+    ['image_notes', '图片说明'],
+    ['extra_info', '其他信息补充'],
+  ]);
+  return Array.from(new Set([...fromDimensions, ...explicit])).map((label) => ({
+    label,
+    priority: priorityMap[label] ?? 'medium',
+    actionPrompt: `请补充「${label}」，用于提升企业知识库健康度和 GEO 推荐可信度。`,
+  })).sort((a, b) => priorityOrder(a.priority) - priorityOrder(b.priority));
+}
+
+function buildGeoStagesFromProject(
+  geoProject: GeoAgentGeoProject | null,
+  geoReports: Record<'doubao' | 'deepseek', GeoAgentGeoReport | null>,
+  geoQuestionSets: Record<'doubao' | 'deepseek', GeoAgentGeoQuestionSet | null>,
+  geoSourceDiscoveries: Record<'doubao' | 'deepseek', GeoAgentGeoSourceDiscovery | null>,
+  geoArticleDrafts: Record<'doubao' | 'deepseek', { consulting: GeoAgentGeoArticleDraft | null; review: GeoAgentGeoArticleDraft | null }>
+): GeoStageStatus[] {
+  const doubaoStageTwoStatus = getPlatformStageTwoStatus(geoProject, 'doubao', geoReports.doubao, geoQuestionSets.doubao);
+  const deepseekStageTwoStatus = getPlatformStageTwoStatus(geoProject, 'deepseek', geoReports.deepseek, geoQuestionSets.deepseek);
+  const doubaoStageThreeStatus = getPlatformStageThreeStatus(geoProject, 'doubao', geoSourceDiscoveries.doubao, geoQuestionSets.doubao, geoReports.doubao);
+  const deepseekStageThreeStatus = getPlatformStageThreeStatus(geoProject, 'deepseek', geoSourceDiscoveries.deepseek, geoQuestionSets.deepseek, geoReports.deepseek);
+  const doubaoStageFourStatus = getPlatformStageFourStatus('doubao', geoSourceDiscoveries.doubao, geoArticleDrafts.doubao);
+  const deepseekStageFourStatus = getPlatformStageFourStatus('deepseek', geoSourceDiscoveries.deepseek, geoArticleDrafts.deepseek);
+  const stageOneStatus: GeoStageStatus['status'] = geoProject?.current_phase === 'ready_for_check'
+    ? '可用'
+    : geoProject?.current_phase === 'collecting'
+      ? '进行中'
+      : '待启动';
+  return [
+    {
+      label: '阶段一：企业知识库构建',
+      status: stageOneStatus,
+      description: stageOneStatus === '可用'
+        ? '企业事实资料、知识条目和本地索引已具备排行榜问题池构建基础。'
+        : '继续补齐企业资料、附件和索引状态。',
+    },
+    {
+      label: '阶段二：豆包排行榜问题池',
+      status: doubaoStageTwoStatus.status,
+      description: doubaoStageTwoStatus.description,
+    },
+    {
+      label: '阶段二：DeepSeek 排行榜问题池',
+      status: deepseekStageTwoStatus.status,
+      description: deepseekStageTwoStatus.description,
+    },
+    {
+      label: '阶段三：豆包高权重信源发现',
+      status: doubaoStageThreeStatus.status,
+      description: doubaoStageThreeStatus.description,
+    },
+    {
+      label: '阶段三：DeepSeek 高权重信源发现',
+      status: deepseekStageThreeStatus.status,
+      description: deepseekStageThreeStatus.description,
+    },
+    {
+      label: '阶段四：豆包咨询/测评支撑内容',
+      status: doubaoStageFourStatus.status,
+      description: doubaoStageFourStatus.description,
+    },
+    {
+      label: '阶段四：DeepSeek 咨询/测评支撑内容',
+      status: deepseekStageFourStatus.status,
+      description: deepseekStageFourStatus.description,
+    },
+    { label: '阶段五：排行榜文章生成', status: '待开发', description: '咨询类和测评类支撑内容完成后，再生成排行榜/推荐类文章。' },
+    { label: '阶段六：平台发稿分发', status: '待开发', description: '后续接入媒体渠道、发稿记录和发布确认。' },
+    { label: '阶段七：平台规则进化', status: '待开发', description: '后续根据各平台收录结果更新规则和渠道积分。' },
+  ];
+}
+
+function buildGeoStagesFromWorkflow(workflow: GeoAgentWorkflowState | null): GeoStageStatus[] | null {
+  if (!workflow) {
+    return null;
+  }
+  const stages: GeoStageStatus[] = [
+    {
+      label: '阶段一：企业知识库构建',
+      status: mapWorkflowStatus(workflow.stage_1.status),
+      description: workflow.stage_1.description,
+    },
+  ];
+  (['doubao', 'deepseek'] as const).forEach((platform) => {
+    const platformState = workflow.platforms[platform];
+    if (!platformState) {
+      return;
+    }
+    ['stage_2', 'stage_3', 'stage_4', 'stage_5'].forEach((stageKey) => {
+      const stage = platformState.stages[stageKey];
+      if (stage) {
+        stages.push({
+          label: `阶段${stage.stage}：${stage.label}`,
+          status: mapWorkflowStatus(stage.status),
+          description: stage.description,
+        });
+      }
+    });
+  });
+  stages.push(
+    { label: '阶段六：平台发稿分发', status: '待开发', description: '排行榜文章完成后再接入发稿记录和发布确认。' },
+    { label: '阶段七：平台规则进化', status: '待开发', description: '根据各平台引用验证结果更新规则和渠道积分。' },
+  );
+  return stages;
+}
+
+function mapWorkflowStatus(status: string): GeoStageStatus['status'] {
+  if (status === 'completed') return '可用';
+  if (status === 'in_progress' || status === 'pending') return '进行中';
+  if (status === 'ready' || status === 'not_started') return '待启动';
+  if (status === 'user_deferred') return '已暂缓';
+  if (status === 'failed') return '已暂缓';
+  return '待启动';
+}
+
+function getPlatformStageFourStatus(
+  platform: 'doubao' | 'deepseek',
+  discovery: GeoAgentGeoSourceDiscovery | null,
+  drafts: { consulting: GeoAgentGeoArticleDraft | null; review: GeoAgentGeoArticleDraft | null }
+): Pick<GeoStageStatus, 'status' | 'description'> {
+  const platformLabel = platform === 'doubao' ? '豆包' : 'DeepSeek';
+  const consultingDone = drafts.consulting?.status === 'draft';
+  const reviewDone = drafts.review?.status === 'draft';
+  if (consultingDone && reviewDone) {
+    return { status: '可用', description: `${platformLabel} 咨询类和测评类支撑文章已完成，可进入排行榜文章生成。` };
+  }
+  if (consultingDone || reviewDone) {
+    return { status: '进行中', description: `${platformLabel} 已完成${consultingDone ? '咨询类' : '测评类'}支撑文章，继续补齐另一类。` };
+  }
+  if (discovery?.discovery.status === 'completed' || (discovery && discovery.discovery.status !== 'failed')) {
+    return { status: '待启动', description: `${platformLabel} 信源发现已完成，可从智能助手生成咨询类和测评类支撑文章。` };
+  }
+  return { status: '待开发', description: `等待${platformLabel}高权重信源发现完成后再启动支撑内容生成。` };
+}
+
+function getPlatformStageThreeStatus(
+  geoProject: GeoAgentGeoProject | null,
+  platform: 'doubao' | 'deepseek',
+  discovery: GeoAgentGeoSourceDiscovery | null,
+  questionSet: GeoAgentGeoQuestionSet | null,
+  report: GeoAgentGeoReport | null
+): Pick<GeoStageStatus, 'status' | 'description'> {
+  const platformLabel = platform === 'doubao' ? '豆包' : 'DeepSeek';
+  if (discovery?.discovery.status === 'completed' || (discovery && discovery.discovery.status !== 'failed')) {
+    return { status: '可用', description: `${platformLabel} 高权重信源发现已完成，可进入咨询类和测评类支撑内容生成。` };
+  }
+  if (discovery?.discovery.status === 'failed') {
+    return { status: '已暂缓', description: `${platformLabel} 高权重信源发现失败，可从智能助手重试。` };
+  }
+  const stageThree = (geoProject?.phase_status?.platforms?.[platform]?.stage_3 ?? {}) as { status?: string };
+  if (stageThree.status === 'completed') {
+    return { status: '可用', description: `${platformLabel} 高权重信源发现已完成，可进入咨询类和测评类支撑内容生成。` };
+  }
+  if (stageThree.status === 'ready' || questionSet || report?.status === 'completed') {
+    return { status: '待启动', description: `${platformLabel} 排行榜问题池已完成，可从智能助手继续发现高权重信源。` };
+  }
+  return { status: '待开发', description: `等待${platformLabel}排行榜问题池完成后，再发现更容易被该平台引用的信源渠道。` };
+}
+
+function getPlatformStageTwoStatus(
+  geoProject: GeoAgentGeoProject | null,
+  platform: 'doubao' | 'deepseek',
+  report: GeoAgentGeoReport | null,
+  questionSet: GeoAgentGeoQuestionSet | null
+): Pick<GeoStageStatus, 'status' | 'description'> {
+  const platformLabel = platform === 'doubao' ? '豆包' : 'DeepSeek';
+  if (questionSet || report?.status === 'completed') {
+    return { status: '可用', description: `${platformLabel} 排行榜问题池已生成，可进入阶段三高权重信源发现。` };
+  }
+  if (report?.status === 'failed') {
+    return { status: '已暂缓', description: `${platformLabel} 排行榜问题池生成失败：${report.error_message || '请稍后重试'}` };
+  }
+  const stageTwo = geoProject?.phase_status?.platforms?.[platform]?.stage_2 ?? {};
+  if (stageTwo.status === 'pending') {
+    return { status: '进行中', description: `已进入${platformLabel}阶段二准备，下一步生成${platformLabel}排行榜问题池。` };
+  }
+  if (stageTwo.status === 'user_deferred') {
+    return { status: '已暂缓', description: `用户已暂缓${platformLabel}阶段二，可稍后从智能助手或知识库详情页重新启动。` };
+  }
+  return { status: '待启动', description: `可从智能助手选择${platformLabel}模型启动排行榜问题池构建。` };
+}
+
+function formatCurrentPhase(phase?: string | null): string {
+  if (phase === 'ready_for_check') {
+    return 'ready_for_check / 可启动阶段二';
+  }
+  if (phase === 'collecting') {
+    return 'collecting / 继续采集';
+  }
+  return 'pending / 阶段状态待刷新';
+}
+
+function buildProfileMarkdown(profile: GeoAgentEnterpriseProfile): string {
+  const sections: Array<[string, Array<[string, unknown]>]> = [
+    ['基础信息', [
+      ['公司名称', profile.company_name],
+      ['公司简称', profile.short_name],
+      ['所属行业', profile.industry],
+      ['主营业务', profile.main_business],
+      ['官方网站', profile.official_website],
+      ['官方自媒体', profile.official_media],
+      ['客服办公电话', profile.customer_service_phone],
+    ]],
+    ['企业介绍', [
+      ['企业详细介绍', profile.detailed_intro],
+      ['品牌故事', profile.brand_story],
+      ['目前痛点/现状', profile.current_pain_points],
+      ['核心优势与特色', profile.core_advantages],
+    ]],
+    ['产品服务', [
+      ['产品/服务介绍', profile.products_services],
+      ['产品/服务特点', profile.product_features],
+      ['品牌授权与客单价', profile.brand_authorization_pricing],
+    ]],
+    ['用户痛点与 EEAT 背书', [
+      ['用户痛点', profile.user_pain_points],
+      ['信任背书', profile.trust_endorsements],
+      ['行业/客户案例', profile.cases],
+    ]],
+    ['区域、关键词与素材', [
+      ['业务区域范围', profile.business_regions],
+      ['目标关键词', profile.target_keywords],
+      ['生成长尾语义词', profile.generated_long_tail_keywords],
+      ['图片内容', profile.image_notes],
+      ['其他信息补充', profile.extra_info],
+    ]],
+  ];
+  return [
+    `# ${profile.short_name || profile.company_name}企业知识库`,
+    '',
+    ...sections.flatMap(([title, fields]) => [
+      `## ${title}`,
+      '',
+      ...fields.map(([label, value]) => `### ${label}\n${hasText(value) ? String(value).trim() : '未填写'}\n`),
+    ]),
+  ].join('\n');
+}
+
+function missingLabels(profile: GeoAgentEnterpriseProfile, fields: Array<[keyof GeoAgentEnterpriseProfile, string]>) {
+  return fields.filter(([field]) => !hasText(profile[field])).map(([, label]) => label);
+}
+
+function hasText(value: unknown) {
+  return typeof value === 'string' ? value.trim().length > 0 : Boolean(value);
+}
+
+function keywordCount(value: unknown) {
+  if (typeof value !== 'string') {
+    return 0;
+  }
+  return value.split(/[\n,，;；、]+/).map((item) => item.trim()).filter(Boolean).length;
+}
+
+function buildRagScore(entries: GeoAgentKnowledgeEntry[], indexStatus: GeoAgentKnowledgeIndexStatus | null) {
+  if (!entries.length) {
+    return 0;
+  }
+  const indexed = indexStatus?.indexed ?? entries.filter((entry) => entry.embedding_status === 'indexed').length;
+  const failed = indexStatus?.failed ?? entries.filter((entry) => entry.embedding_status === 'failed').length;
+  const ratio = indexed / Math.max(entries.length, 1);
+  return clampScore(Math.round(ratio * 90 + (entries.length >= 8 ? 10 : 0) - failed * 8));
+}
+
+function clampScore(score: number) {
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function scoreToStatus(score: number): KnowledgeHealthStatus {
+  if (score >= 80) {
+    return 'good';
+  }
+  if (score >= 55) {
+    return 'warning';
+  }
+  if (score > 0) {
+    return 'danger';
+  }
+  return 'muted';
+}
+
+function priorityOrder(priority: KnowledgeGapItem['priority']) {
+  return priority === 'high' ? 0 : priority === 'medium' ? 1 : 2;
+}
+
+function statusClassName(status: KnowledgeHealthStatus) {
+  if (status === 'good') {
+    return 'bg-secondary/10 text-secondary';
+  }
+  if (status === 'warning') {
+    return 'bg-amber-500/10 text-amber-700 dark:text-amber-300';
+  }
+  if (status === 'danger') {
+    return 'bg-red-500/10 text-red-600 dark:text-red-300';
+  }
+  return 'bg-surface-container text-on-surface-variant';
+}
+
+function compactProfile(profile: ProfileFormState & { project_id: string }): GeoAgentEnterpriseProfileInput {
+  return Object.entries(profile).reduce((acc, [key, value]) => {
+    const normalized = typeof value === 'string' ? value.trim() : value;
+    if (normalized) {
+      return { ...acc, [key]: normalized };
+    }
+    return acc;
+  }, {} as GeoAgentEnterpriseProfileInput);
+}
+
+function profileToForm(profile: GeoAgentEnterpriseProfile): ProfileFormState {
+  return {
+    company_name: profile.company_name ?? '',
+    short_name: profile.short_name ?? '',
+    industry: profile.industry ?? '',
+    main_business: profile.main_business ?? '',
+    official_website: profile.official_website ?? '',
+    official_media: profile.official_media ?? '',
+    detailed_intro: profile.detailed_intro ?? '',
+    brand_story: profile.brand_story ?? '',
+    products_services: profile.products_services ?? '',
+    product_features: profile.product_features ?? '',
+    user_pain_points: profile.user_pain_points ?? '',
+    trust_endorsements: profile.trust_endorsements ?? '',
+    brand_authorization_pricing: profile.brand_authorization_pricing ?? '',
+    cases: profile.cases ?? '',
+    business_regions: profile.business_regions ?? '',
+    customer_service_phone: profile.customer_service_phone ?? '',
+    current_pain_points: profile.current_pain_points ?? '',
+    core_advantages: profile.core_advantages ?? '',
+    extra_info: profile.extra_info ?? '',
+    image_notes: profile.image_notes ?? '',
+    target_keywords: profile.target_keywords ?? '',
+  };
+}
+
+function buildImageNotes(images: UploadedImageAsset[]) {
+  if (!images.length) {
+    return '';
+  }
+  return images
+    .map((image, index) => `${index + 1}. ${image.name}（${image.type || 'image'}，${formatFileSize(image.size)}）`)
+    .join('\n');
+}
+
+function formatFileSize(size: number) {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('文件读取失败。'));
+    reader.onload = () => {
+      const value = String(reader.result || '');
+      resolve(value.includes(',') ? value.split(',', 2)[1] : value);
+    };
+    reader.readAsDataURL(file);
+  });
 }

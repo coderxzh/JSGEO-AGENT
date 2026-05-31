@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Layout } from './components/layout/Layout';
 import { Dashboard } from './views/Dashboard';
 import { AgentStudio } from './views/AgentStudio';
@@ -18,6 +18,17 @@ import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<ViewState>('dashboard');
+
+  useEffect(() => {
+    const handleOpenView = (event: Event) => {
+      const view = (event as CustomEvent<{ view?: ViewState }>).detail?.view;
+      if (view) {
+        setCurrentView(view);
+      }
+    };
+    window.addEventListener('geo-agent-open-view', handleOpenView);
+    return () => window.removeEventListener('geo-agent-open-view', handleOpenView);
+  }, []);
 
   const renderView = () => {
     switch (currentView) {
@@ -59,5 +70,4 @@ export default function App() {
     </EnterpriseProvider>
   );
 }
-
 

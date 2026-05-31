@@ -46,6 +46,7 @@ export function Layout({ currentView, onViewChange, children }: LayoutProps) {
       
       <div className="flex-1 flex flex-col relative w-full overflow-hidden">
         <Header 
+          currentView={currentView}
           isSidebarCollapsed={isCollapsed}
           onToggleSidebar={() => setIsCollapsed(!isCollapsed)}
         />

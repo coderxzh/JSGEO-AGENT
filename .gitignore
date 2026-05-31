@@ -2,6 +2,12 @@ node_modules/
 build/
 dist/
 coverage/
+.npm-cache/
+__pycache__/
+*.pyc
+*.spec
+resources/agent-backend/
+*.sqlite3
 .DS_Store
 *.log
 .env*

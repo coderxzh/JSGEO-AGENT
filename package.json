@@ -3,36 +3,93 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "main": "electron-main/main.cjs",
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev:web": "vite --port=3000 --host=127.0.0.1",
+    "dev:electron": "wait-on http://127.0.0.1:3000 && electron .",
+    "dev:desktop": "concurrently -k \"npm:dev:web\" \"npm:dev:electron\"",
     "build": "vite build",
+    "build:web": "vite build",
+    "build:backend": "node scripts/build-backend.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "dist": "npm run build:web && electron-builder"
   },
   "dependencies": {
+    "@fontsource-variable/geist": "^5.2.9",
     "@google/genai": "^2.4.0",
+    "@radix-ui/react-use-controllable-state": "^1.2.2",
+    "@streamdown/cjk": "^1.0.3",
+    "@streamdown/code": "^1.1.1",
+    "@streamdown/math": "^1.0.2",
+    "@streamdown/mermaid": "^1.0.2",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
+    "ai": "^6.0.191",
+    "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
-    "motion": "^12.23.24",
+    "motion": "^12.40.0",
+    "nanoid": "^5.1.11",
+    "radix-ui": "^1.4.3",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "recharts": "^3.8.1",
+    "shadcn": "^4.8.2",
+    "streamdown": "^2.5.0",
     "tailwind-merge": "^3.6.0",
+    "tw-animate-css": "^1.4.0",
+    "use-stick-to-bottom": "^1.1.4",
     "vite": "^6.2.3"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
+    "concurrently": "^9.2.1",
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12",
     "esbuild": "^0.25.0",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.3"
+    "vite": "^6.2.3",
+    "wait-on": "^9.0.3"
+  },
+  "build": {
+    "appId": "com.jingshan.geoagentstudio",
+    "productName": "GEO-Agent Studio",
+    "files": [
+      "dist/**/*",
+      "electron-main/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/agent-backend",
+        "to": "agent-backend",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "database",
+        "to": "database",
+        "filter": [
+          "schema.sql"
+        ]
+      }
+    ],
+    "mac": {
+      "target": "dmg"
+    },
+    "win": {
+      "target": "nsis"
+    }
   }
 }
