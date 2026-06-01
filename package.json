@@ -22,6 +22,7 @@
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "ai": "^6.0.191",
+    "better-sqlite3": "^12.10.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
@@ -57,7 +58,9 @@
     "productName": "GEO-Agent Studio",
     "files": [
       "dist/**/*",
-      "electron-main/**/*",
+      "src/main/**/*",
+      "src/shared/**/*",
+      ".env.example",
       "package.json"
     ],
     "mac": {

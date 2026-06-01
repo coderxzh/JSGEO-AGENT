@@ -1,5 +1,12 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
+const fs = require('node:fs');
 const path = require('node:path');
+const {
+  closeDatabase,
+  getDbPath,
+  initializeDatabase,
+} = require('./services/databaseService.cjs');
+const projectService = require('./services/projectService.cjs');
 
 const rootDir = path.resolve(__dirname, '..', '..');
 const isDev = !app.isPackaged;
@@ -10,12 +17,41 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function loadEnvFile() {
+  const envPath = path.join(rootDir, '.env');
+  if (!fs.existsSync(envPath)) {
+    return;
+  }
+
+  fs.readFileSync(envPath, 'utf8')
+    .split(/\r?\n/)
+    .forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) {
+        return;
+      }
+
+      const separator = trimmed.indexOf('=');
+      if (separator <= 0) {
+        return;
+      }
+
+      const key = trimmed.slice(0, separator).trim();
+      const rawValue = trimmed.slice(separator + 1).trim();
+      if (!key || process.env[key] !== undefined) {
+        return;
+      }
+
+      process.env[key] = rawValue.replace(/^['"]|['"]$/g, '');
+    });
+}
+
 function emptyIndexStatus(projectId = null) {
   return {
     project_id: projectId,
-    embedding_model: 'not-configured',
+    embedding_model: process.env.ARK_EMBEDDING_MODEL || 'not-configured',
     vector_backend: 'disabled',
-    embedding_backend: 'disabled',
+    embedding_backend: process.env.ARK_API_KEY ? 'volcengine-ark' : 'disabled',
     pending: 0,
     indexed: 0,
     failed: 0,
@@ -58,14 +94,14 @@ function createShellWorkflowState(geoProjectId) {
     artifact_id: null,
     artifacts: {},
   });
-  const stage1 = stage(1, 'stage_1', '企业知识库', '上传或粘贴企业资料，确认后建立本地知识库。');
+
   const platformState = (platform, label) => ({
     platform,
     label,
     stages: {
-      stage_2: stage(2, 'stage_2', 'AI 问题池', '基于企业知识库生成真实 AI 用户会问的问题。'),
+      stage_2: stage(2, 'stage_2', 'AI 问题池', '基于企业知识库生成真实 AI 用户会问的推荐、对比和采购问题。'),
       stage_3: stage(3, 'stage_3', '支撑内容策略', '规划被 AI 引用和推荐所需的内容证据。'),
-      stage_4: stage(4, 'stage_4', '支撑内容生成', '生成咨询类、测评类和推荐理由内容草稿。'),
+      stage_4: stage(4, 'stage_4', '支撑内容生成', '生成咨询类、测评类和推荐理由类内容草稿。'),
     },
   });
 
@@ -75,7 +111,7 @@ function createShellWorkflowState(geoProjectId) {
     company_name: '待录入企业',
     current_phase: 'collecting',
     knowledge_base_ready: false,
-    stage_1: stage1,
+    stage_1: stage(1, 'stage_1', '企业知识库', '上传或粘贴企业资料，确认后建立本地知识库。'),
     platforms: {
       doubao: platformState('doubao', '豆包'),
       deepseek: platformState('deepseek', 'DeepSeek'),
@@ -84,7 +120,7 @@ function createShellWorkflowState(geoProjectId) {
 }
 
 function notImplemented(name) {
-  return new Error(`${name} 尚未接入新 Electron-only 服务层，将在后续阶段实现。`);
+  return new Error(`${name} 尚未接入新的 Electron-only 服务层，将在后续阶段实现。`);
 }
 
 async function createWindow() {
@@ -108,15 +144,8 @@ async function createWindow() {
   }
 }
 
-function registerHandlers() {
-  ipcMain.handle('app:ping', async () => ({
-    ok: true,
-    service: 'geo-agent-electron-shell',
-    mode: 'electron-only-shell',
-    timestamp: nowIso(),
-  }));
-
-  ipcMain.handle('geo-agent:get-config-status', async () => ({
+function getConfigStatus() {
+  return {
     providers: {
       openai: {
         provider: 'openai',
@@ -137,7 +166,21 @@ function registerHandlers() {
         base_url: process.env.ARK_BASE_URL || process.env.ARK_EMBEDDING_BASE_URL || '',
       },
     },
-  }));
+  };
+}
+
+function registerHandlers() {
+  const health = async () => ({
+    ok: true,
+    service: 'geo-agent-electron-main',
+    mode: 'electron-only-local',
+    database_path: getDbPath(),
+    timestamp: nowIso(),
+  });
+
+  ipcMain.handle('app:ping', health);
+  ipcMain.handle('geo-agent:health-check', health);
+  ipcMain.handle('geo-agent:get-config-status', async () => getConfigStatus());
 
   ipcMain.handle('geo-agent:get-skills', async () => ({
     skills: [
@@ -147,13 +190,26 @@ function registerHandlers() {
         description: '上传或粘贴企业资料，创建本地企业知识库。',
         visibility: 'user',
         path: 'builtin://knowledge-base-ingest',
-        content: '阶段 0 占位技能。完整中文 Skill 规则将在知识库阶段接入。',
+        content: '阶段 1 占位技能。完整中文 Skill 规则将在知识库工作台阶段接入。',
       },
     ],
   }));
 
-  ipcMain.handle('geo-agent:get-knowledge-profiles', async () => ({ profiles: [] }));
-  ipcMain.handle('geo-agent:get-projects', async () => ({ projects: [] }));
+  ipcMain.handle('geo-agent:get-projects', async () => ({
+    projects: projectService.listProjects(),
+  }));
+  ipcMain.handle('geo-agent:create-project', async (_event, payload) => projectService.createProject(payload));
+  ipcMain.handle('geo-agent:get-project', async (_event, projectId) => projectService.getProject(projectId));
+  ipcMain.handle('geo-agent:delete-project', async (_event, projectId) => projectService.deleteProject(projectId));
+
+  ipcMain.handle('geo-agent:get-knowledge-profiles', async () => ({
+    profiles: projectService.listKnowledgeProfiles(),
+  }));
+  ipcMain.handle('geo-agent:get-knowledge-profile', async (_event, projectId) =>
+    projectService.getKnowledgeProfile(projectId, emptyIndexStatus(projectId)));
+  ipcMain.handle('geo-agent:delete-knowledge-profile', async (_event, projectId) =>
+    projectService.deleteProject(projectId));
+
   ipcMain.handle('geo-agent:get-conversations', async () => ({ conversations: [] }));
   ipcMain.handle('geo-agent:get-knowledge-entries', async () => ({ entries: [], total: 0 }));
   ipcMain.handle('geo-agent:search-knowledge', async () => ({ entries: [], total: 0 }));
@@ -166,34 +222,35 @@ function registerHandlers() {
   ipcMain.handle('geo-agent:get-geo-project', async (_event, geoProjectId) => createShellGeoProject(geoProjectId));
   ipcMain.handle('geo-agent:get-geo-workflow-state', async (_event, geoProjectId) => createShellWorkflowState(geoProjectId));
 
-  ipcMain.handle('geo-agent:send-chat', async (_event, message, conversationId = null, selectedModel = null) => ({
-    role: 'assistant',
-    content: '新 Electron-only 服务层正在重建中。阶段 0 只保证界面与 API 空壳稳定，聊天能力将在后续阶段接入。',
-    conversation_id: conversationId || `shell-${Date.now()}`,
-    provider: 'electron-shell',
-    model: selectedModel || 'not-connected',
-    error: null,
-    sources: [],
-    search_queries: [],
-    search_actions: [],
-    search_usage: {},
-    reasoning_content: null,
-    echo: message,
-  }));
+  ipcMain.handle('geo-agent:send-chat', async (_event, payloadOrMessage, conversationId = null, selectedModel = null) => {
+    const payload = typeof payloadOrMessage === 'object' && payloadOrMessage !== null
+      ? payloadOrMessage
+      : { message: payloadOrMessage, conversation_id: conversationId, selected_model: selectedModel };
 
-  ipcMain.handle('geo-agent:clear-conversation-history', async () => ({
-    ok: true,
-    backup_path: '',
-  }));
+    return {
+      role: 'assistant',
+      content: '新的 Electron-only 服务层正在重建中。阶段 1 已接入本地企业数据库，聊天能力将在后续阶段接入。',
+      conversation_id: payload.conversation_id || `shell-${Date.now()}`,
+      provider: 'electron-main',
+      model: payload.selected_model || 'not-connected',
+      error: null,
+      sources: [],
+      search_queries: [],
+      search_actions: [],
+      search_usage: {},
+      reasoning_content: null,
+    };
+  });
+
+  ipcMain.handle('geo-agent:clear-conversation-history', async () => ({ ok: true, backup_path: '' }));
   ipcMain.handle('geo-agent:delete-conversation', async () => ({ ok: true }));
-  ipcMain.handle('geo-agent:delete-knowledge-profile', async () => ({ ok: true }));
   ipcMain.handle('geo-agent:reject-knowledge-draft', async () => ({ ok: true }));
 
   const pendingApis = [
     'geo-agent:get-conversation',
+    'geo-agent:send-chat-stream',
     'geo-agent:save-enterprise-profile',
     'geo-agent:update-knowledge-profile',
-    'geo-agent:get-knowledge-profile',
     'geo-agent:create-knowledge-entry',
     'geo-agent:create-knowledge-asset',
     'geo-agent:create-knowledge-draft',
@@ -202,15 +259,18 @@ function registerHandlers() {
     'geo-agent:confirm-geo-phase-two',
     'geo-agent:cancel-geo-phase-two',
     'geo-agent:run-geo-phase-two-report',
+    'geo-agent:run-geo-phase-two-report-stream',
     'geo-agent:get-latest-geo-report',
     'geo-agent:get-geo-report',
     'geo-agent:get-latest-geo-question-set',
     'geo-agent:get-geo-question-set',
     'geo-agent:run-geo-source-discovery',
+    'geo-agent:run-geo-source-discovery-stream',
     'geo-agent:get-latest-geo-source-discovery',
     'geo-agent:get-geo-source-discovery',
     'geo-agent:run-geo-article-draft',
     'geo-agent:run-geo-support-articles',
+    'geo-agent:run-geo-support-articles-stream',
     'geo-agent:get-latest-geo-article-draft',
     'geo-agent:get-geo-article-draft',
     'geo-agent:confirm-geo-article-draft',
@@ -224,9 +284,17 @@ function registerHandlers() {
   });
 }
 
+loadEnvFile();
 registerHandlers();
 
-app.whenReady().then(createWindow);
+app.whenReady().then(async () => {
+  initializeDatabase(app.getPath('userData'));
+  await createWindow();
+});
+
+app.on('before-quit', () => {
+  closeDatabase();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {

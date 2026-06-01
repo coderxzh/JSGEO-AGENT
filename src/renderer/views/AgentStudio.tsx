@@ -185,6 +185,25 @@ const KNOWLEDGE_ATTACHMENT_ACCEPT = [
 ].join(',');
 const DRAFT_PROFILE_NAME = '企业知识库草稿';
 const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+const TYPEWRITER_CHUNK_SIZE = 3;
+const TYPEWRITER_DELAY = 14;
+
+async function typeMessageText(
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
+  id: string,
+  text: string,
+  field: 'content' | 'reasoningContent' = 'content'
+) {
+  if (!text) {
+    return;
+  }
+
+  for (let index = 0; index < text.length; index += TYPEWRITER_CHUNK_SIZE) {
+    const chunk = text.slice(index, index + TYPEWRITER_CHUNK_SIZE);
+    setMessages((current) => appendMessageText(current, id, chunk, field));
+    await wait(TYPEWRITER_DELAY);
+  }
+}
 const PROFILE_SUMMARY_FIELDS: Array<[keyof GeoAgentEnterpriseProfile, string]> = [
   ['company_name', '公司名称'],
   ['short_name', '公司简称'],
@@ -858,6 +877,9 @@ export function AgentStudio() {
     }
 
     const assistantId = `assistant-${Date.now()}`;
+    const shouldShowReasoning = shouldUseDispatcher
+      ? true
+      : selectedCapability.supportsDeepThinking ? deepThinking : false;
     setInputValue('');
     setSelectedSkill(null);
     setIsSending(true);
@@ -868,7 +890,7 @@ export function AgentStudio() {
         id: assistantId,
         role: 'assistant',
         content: '',
-        reasoning: '正在理解 GEO 任务',
+        reasoning: shouldShowReasoning ? '正在理解 GEO 任务' : undefined,
         status: 'streaming',
       },
     ]);
@@ -919,7 +941,7 @@ export function AgentStudio() {
       }
 
       const options = {
-        deepThinking: shouldUseDispatcher ? true : selectedCapability.supportsDeepThinking ? deepThinking : false,
+        deepThinking: shouldShowReasoning,
         webSearch: shouldUseDispatcher ? false : selectedCapability.supportsWebSearch ? webSearch : false,
         searchContext: !shouldUseDispatcher && selectedCapability.supportsWebSearch && webSearch
           ? buildSearchContext(content, currentEnterprise)
@@ -942,7 +964,9 @@ export function AgentStudio() {
             }
             if (event.type === 'status' && event.message) {
               setMessages((current) => updateMessage(current, assistantId, {
-                reasoning: hasFiles ? `已接收 ${files.length} 个附件，正在解析并写入知识库。${event.message}` : event.message,
+                reasoning: options.deepThinking
+                  ? (hasFiles ? `已接收 ${files.length} 个附件，正在解析并写入知识库。${event.message}` : event.message)
+                  : undefined,
                 status: 'streaming',
               }));
             }
@@ -973,24 +997,27 @@ export function AgentStudio() {
               }));
             }
             if (event.type === 'done') {
-              setMessages((current) => updateMessage(current, assistantId, {
+              setMessages((current) => updateMessage(current, assistantId, (message) => ({
+                ...message,
                 status: event.error ? 'error' : 'complete',
-                ...(event.content ? { content: event.content } : {}),
+                content: message.content || event.content || '',
                 sources: event.sources ?? [],
                 searchQueries: event.search_queries ?? [],
                 searchActions: event.search_actions ?? [],
                 searchUsage: event.search_usage ?? {},
-                reasoningContent: event.reasoning_content ?? undefined,
+                reasoningContent: options.deepThinking
+                  ? message.reasoningContent || event.reasoning_content || undefined
+                  : undefined,
                 provider: event.provider,
                 model: event.model,
                 error: event.error,
-                reasoning: `${hasFiles ? `已解析 ${files.length} 个附件并写入企业知识库。` : ''}${buildAssistantReasoning(event.provider, event.model, {
-                  deepThinking,
+                reasoning: options.deepThinking ? `${hasFiles ? `已解析 ${files.length} 个附件并写入企业知识库。` : ''}${buildAssistantReasoning(event.provider, event.model, {
+                  deepThinking: options.deepThinking,
                   webSearch: selectedCapability.supportsWebSearch && webSearch,
                   dispatcher: shouldUseDispatcher,
                   error: Boolean(event.error),
-                })}`,
-              }));
+                })}` : undefined,
+              })));
             }
           }
         );
@@ -1001,29 +1028,42 @@ export function AgentStudio() {
         const response = await window.geoAgent.sendChat(content, conversationId, requestModel, options);
         setConversationId(response.conversation_id);
         localStorage.setItem(currentConversationStorageKey, response.conversation_id);
+        const finalReasoning = options.deepThinking ? `${hasFiles ? `已解析 ${files.length} 个附件并写入企业知识库。` : ''}${buildAssistantReasoning(response.provider, response.model, {
+          deepThinking: options.deepThinking,
+          webSearch: selectedCapability.supportsWebSearch && webSearch,
+          dispatcher: shouldUseDispatcher,
+          error: Boolean(response.error),
+        })}` : undefined;
         setMessages((current) => updateMessage(current, assistantId, {
-          reasoning: `${hasFiles ? `已解析 ${files.length} 个附件并写入企业知识库。` : ''}${buildAssistantReasoning(response.provider, response.model, {
-            deepThinking,
-            webSearch: selectedCapability.supportsWebSearch && webSearch,
-            dispatcher: shouldUseDispatcher,
-            error: Boolean(response.error),
-          })}`,
-          content: response.content,
+          reasoning: finalReasoning,
+          content: '',
           sources: response.sources ?? [],
           searchQueries: response.search_queries ?? [],
           searchActions: response.search_actions ?? [],
           searchUsage: response.search_usage ?? {},
-          reasoningContent: response.reasoning_content ?? undefined,
+          reasoningContent: undefined,
           provider: response.provider,
           model: response.model,
           error: response.error,
+          status: 'streaming',
+        }));
+        if (options.deepThinking && response.reasoning_content) {
+          await typeMessageText(setMessages, assistantId, response.reasoning_content, 'reasoningContent');
+        }
+        await typeMessageText(setMessages, assistantId, response.content);
+        setMessages((current) => updateMessage(current, assistantId, {
           status: response.error ? 'error' : 'complete',
         }));
         window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: response.conversation_id } }));
       }
     } catch (error) {
+      const errorMessage = normalizeChatError(error);
       setMessages((current) => updateMessage(current, assistantId, {
-        content: normalizeChatError(error),
+        content: '',
+        status: 'streaming',
+      }));
+      await typeMessageText(setMessages, assistantId, errorMessage);
+      setMessages((current) => updateMessage(current, assistantId, {
         status: 'error',
       }));
     } finally {
@@ -2094,8 +2134,8 @@ const ChatBubble: React.FC<{
   const nextAction = getNextWorkflowAction(workflowState, message);
   if (message.role === 'user') {
     return (
-      <Message from="user" className="max-w-[72%]">
-        <MessageContent className="!rounded-[22px] !rounded-tr-[10px] !bg-[#f1f0ee] !px-5 !py-3 text-[15px] leading-relaxed !text-[#2f2f2f] dark:!bg-[#2d2d2d] dark:!text-[#f1f1f1]">
+      <Message from="user" className="max-w-[78%] items-end">
+        <MessageContent className="!rounded-[999px] !bg-[#eeeeec] !px-5 !py-2.5 text-[15px] leading-relaxed !text-[#2f2f2f] shadow-none dark:!bg-[#2d2d2d] dark:!text-[#f1f1f1]">
           {message.content}
         </MessageContent>
       </Message>
@@ -2103,20 +2143,20 @@ const ChatBubble: React.FC<{
   }
 
   return (
-    <Message from="assistant" className="max-w-[85%]">
+    <Message from="assistant" className="max-w-[88%]">
       {message.reasoning && (
-        <Reasoning className="mb-1" defaultOpen={message.status === 'streaming'}>
-          <ReasoningTrigger className="w-fit rounded-2xl bg-[#f7f7f5] px-4 py-2 text-secondary dark:bg-surface-variant/45">
+        <Reasoning className="mb-3" defaultOpen={message.status === 'streaming'} isStreaming={message.status === 'streaming'}>
+          <ReasoningTrigger className="w-fit rounded-full px-0 py-1 text-[#68707a] transition-colors hover:text-[#2f2f2f] dark:text-[#a8adb4] dark:hover:text-[#f1f1f1]">
             <Brain className="size-4" />
-            <span className="text-[11px] font-bold uppercase tracking-wider">本地后端 • GEO Agent Sidecar</span>
+            <span className="text-[12px] font-semibold">{message.status === 'streaming' ? '正在思考' : '思考过程'}</span>
             <ChevronDown className="size-4 text-on-surface-variant" />
           </ReasoningTrigger>
-          <ReasoningContent className="rounded-2xl bg-[#f7f7f5] p-4 text-[13px] text-on-surface-variant dark:bg-surface-variant/45">
+          <ReasoningContent className="pl-6 pr-2 pt-1 text-[13px] leading-relaxed text-[#707780] dark:text-[#aeb4bc]">
             {message.reasoning}
           </ReasoningContent>
         </Reasoning>
       )}
-      <MessageContent className="rounded-2xl rounded-tl-sm bg-[#f7f7f5] p-6 text-[14px] leading-relaxed text-[#2f2f2f] dark:bg-[#242424] dark:text-[#f1f1f1]">
+      <MessageContent className="!w-full !max-w-full !overflow-visible !rounded-none !bg-transparent !p-0 text-[15px] leading-relaxed text-[#2f2f2f] shadow-none dark:!bg-transparent dark:text-[#f1f1f1]">
         {message.reasoningContent && (
           <AssistantChainOfThought
             content={message.reasoningContent}
@@ -2171,7 +2211,7 @@ const ChatBubble: React.FC<{
         {message.status === 'streaming' && !message.content ? (
           message.phaseTwoExecution || message.sourceDiscoveryExecution || message.articleDraftExecution ? null : <ThinkingIndicator label={message.reasoning ?? '正在思考'} />
         ) : (
-          <MessageResponse>{message.content}</MessageResponse>
+          <MessageResponse className="max-w-none">{message.content}</MessageResponse>
         )}
       </MessageContent>
       {message.knowledgeDraft && message.confirmationState === 'approval-requested' && (
@@ -2246,8 +2286,8 @@ const AssistantChainOfThought: React.FC<{
   liveSearchSteps: Array<{ query: string; status: 'in_progress' | 'completed' }>;
   searchQueries: string[];
 }> = ({ content, isStreaming, liveSearchSteps, searchQueries }) => (
-  <ChainOfThought className="mb-4 rounded-xl border border-[#e2e0dc] bg-white/55 px-3 py-2.5 dark:border-[#393939] dark:bg-white/[0.03]" defaultOpen={isStreaming}>
-    <ChainOfThoughtHeader className="text-[12px] font-semibold text-[#6b6761] hover:text-[#2f2f2f] dark:text-[#aaa] dark:hover:text-[#f1f1f1]">
+  <ChainOfThought className="mb-4 border-0 bg-transparent px-0 py-1 shadow-none" defaultOpen={isStreaming}>
+    <ChainOfThoughtHeader className="w-fit text-[12px] font-semibold text-[#68707a] hover:text-[#2f2f2f] dark:text-[#a8adb4] dark:hover:text-[#f1f1f1]">
       {isStreaming ? '正在思考' : '思考过程'}
     </ChainOfThoughtHeader>
     <ChainOfThoughtContent className="mt-3 space-y-2">
@@ -2255,7 +2295,7 @@ const AssistantChainOfThought: React.FC<{
         <ChainOfThoughtSearchResults>
           {(liveSearchSteps.length > 0 ? liveSearchSteps.map((step) => step.query) : searchQueries).map((query) => (
             <ChainOfThoughtSearchResult
-              className="border border-[#dedbd5] bg-[#f7f7f5] text-[#6b6761] dark:border-[#444] dark:bg-[#2a2a2a] dark:text-[#cfcfcf]"
+              className="border border-[#dedbd5] bg-transparent text-[#6b6761] dark:border-[#444] dark:bg-transparent dark:text-[#cfcfcf]"
               key={query}
             >
               {query}
@@ -2279,7 +2319,7 @@ const AssistantChainOfThought: React.FC<{
         label={isStreaming ? '模型正在组织推理' : '模型思考摘要'}
         status={isStreaming ? 'active' : 'complete'}
       >
-        <div className="whitespace-pre-wrap rounded-lg bg-[#f7f7f5] p-3 text-[13px] leading-relaxed text-[#4b4742] dark:bg-[#1f1f1f] dark:text-[#d8d8d8]">
+        <div className="whitespace-pre-wrap text-[13px] leading-relaxed text-[#4b4742] dark:text-[#d8d8d8]">
           {content}
         </div>
       </ChainOfThoughtStep>

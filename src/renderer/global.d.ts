@@ -172,6 +172,25 @@ declare global {
     updated_at: string;
   };
 
+  type GeoAgentProjectSummary = {
+    id: string;
+    name: string;
+    description?: string | null;
+    company_name?: string | null;
+    industry?: string | null;
+    region?: string | null;
+    status: string;
+    created_at?: string;
+    updated_at?: string;
+  };
+
+  type GeoAgentCreateProjectPayload = {
+    name?: string;
+    company_name?: string;
+    companyName?: string;
+    description?: string | null;
+  };
+
   type GeoAgentGeoProject = {
     id: string;
     project_id: string;
@@ -405,16 +424,10 @@ declare global {
         search_usage?: GeoAgentSearchUsage;
         reasoning_content?: string | null;
       }>;
-      getProjects: () => Promise<{
-        projects: Array<{
-          id: string;
-          name: string;
-          company_name?: string | null;
-          industry?: string | null;
-          region?: string | null;
-          status: string;
-        }>;
-      }>;
+      getProjects: () => Promise<{ projects: GeoAgentProjectSummary[] }>;
+      createProject: (payload: GeoAgentCreateProjectPayload) => Promise<{ project: GeoAgentProjectSummary }>;
+      getProject: (projectId: string) => Promise<{ project: GeoAgentProjectSummary }>;
+      deleteProject: (projectId: string) => Promise<{ ok: boolean }>;
       ensureGeoProject: (projectId: string) => Promise<GeoAgentGeoProject>;
       getGeoProjects: (projectId?: string | null) => Promise<{ projects: GeoAgentGeoProject[] }>;
       getGeoProject: (geoProjectId: string) => Promise<GeoAgentGeoProject>;
