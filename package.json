@@ -1,25 +1,19 @@
 {
-  "name": "react-example",
+  "name": "geo-agent-studio-ui-shell",
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "main": "electron-main/main.cjs",
+  "main": "src/main/index.cjs",
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
-    "dev:web": "vite --port=3000 --host=127.0.0.1",
-    "dev:electron": "wait-on http://127.0.0.1:3000 && electron .",
-    "dev:desktop": "concurrently -k \"npm:dev:web\" \"npm:dev:electron\"",
+    "dev": "concurrently -k \"vite --port=3000 --host=127.0.0.1\" \"wait-on http://127.0.0.1:3000 && electron .\"",
     "build": "vite build",
-    "build:web": "vite build",
-    "build:backend": "node scripts/build-backend.cjs",
-    "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit",
-    "dist": "npm run build:web && electron-builder"
+    "typecheck": "tsc --noEmit",
+    "lint": "npm run typecheck",
+    "clean": "node -e \"const fs=require('fs'); for (const p of ['dist','server.js']) fs.rmSync(p,{recursive:true,force:true});\"",
+    "dist": "npm run build && electron-builder"
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.2.9",
-    "@google/genai": "^2.4.0",
     "@radix-ui/react-use-controllable-state": "^1.2.2",
     "@streamdown/cjk": "^1.0.3",
     "@streamdown/code": "^1.1.1",
@@ -31,8 +25,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
-    "dotenv": "^17.2.3",
-    "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.40.0",
     "nanoid": "^5.1.11",
@@ -48,7 +40,6 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.2.1",
@@ -68,22 +59,6 @@
       "dist/**/*",
       "electron-main/**/*",
       "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "resources/agent-backend",
-        "to": "agent-backend",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "database",
-        "to": "database",
-        "filter": [
-          "schema.sql"
-        ]
-      }
     ],
     "mac": {
       "target": "dmg"

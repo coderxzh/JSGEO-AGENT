@@ -74,7 +74,7 @@ import {
 } from '../components/ai-elements/sources';
 import { Suggestion, Suggestions } from '../components/ai-elements/suggestion';
 import { cn } from '../lib/utils';
-import { TooltipProvider } from '../../components/ui/tooltip';
+import { TooltipProvider } from '../components/ui/tooltip';
 import { useEnterprise } from '../context/EnterpriseContext';
 
 type SourceCitation = GeoAgentSourceCitation;
