@@ -14,7 +14,6 @@ import {
   Mic,
   Plus,
   Search,
-  SlidersHorizontal,
   Sparkles,
   Target,
   X,
@@ -79,7 +78,6 @@ import { useEnterprise } from '../context/EnterpriseContext';
 
 type SourceCitation = GeoAgentSourceCitation;
 type SearchAction = GeoAgentSearchAction;
-type SearchContext = GeoAgentSearchContext;
 type SearchUsage = GeoAgentSearchUsage;
 type PromptAttachment = {
   filename?: string;
@@ -94,6 +92,8 @@ type ChatMessage = {
   content: string;
   reasoning?: string;
   reasoningContent?: string;
+  modelDebugLines?: string[];
+  draftStreamSections?: Partial<Record<string, number>>;
   sources?: SourceCitation[];
   searchQueries?: string[];
   searchActions?: SearchAction[];
@@ -132,38 +132,8 @@ type ChatMessage = {
   actionBusy?: boolean;
 };
 
-type ModelCapability = {
-  label: string;
-  shortLabel: string;
-  providerKey: 'doubao' | 'deepseek';
-  supportsDeepThinking: boolean;
-  supportsWebSearch: boolean;
-  defaultDeepThinking: boolean;
-  defaultWebSearch: boolean;
-};
-
-const MODEL_CAPABILITIES: ModelCapability[] = [
-  {
-    label: '豆包 Seed 深度搜索',
-    shortLabel: '豆包',
-    providerKey: 'doubao',
-    supportsDeepThinking: true,
-    supportsWebSearch: true,
-    defaultDeepThinking: true,
-    defaultWebSearch: true,
-  },
-  {
-    label: 'DeepSeek-V4 深度思考',
-    shortLabel: 'DeepSeek',
-    providerKey: 'deepseek',
-    supportsDeepThinking: true,
-    supportsWebSearch: false,
-    defaultDeepThinking: true,
-    defaultWebSearch: false,
-  },
-];
-
 type ConfigStatus = Awaited<ReturnType<NonNullable<Window['geoAgent']>['getConfigStatus']>>;
+const AUTO_PLATFORM: 'doubao' = 'doubao';
 
 const DEFAULT_INPUT_PLACEHOLDER = '输入 GEO 任务，例如：为成都行乐音改建立企业知识库...';
 const CURRENT_CONVERSATION_STORAGE_PREFIX = 'geo-agent-current-conversation-id';
@@ -573,6 +543,21 @@ function hasProfileValue(value: unknown) {
     && !text.startsWith('这是通过智能助手知识库录入技能自动创建的草稿');
 }
 
+function isConfirmableKnowledgeDraft(draft?: GeoAgentKnowledgeDraft | null) {
+  if (!draft || draft.extraction_status === 'failed' || draft.status === 'failed' || draft.error_message) {
+    return false;
+  }
+  const hasFacts = Array.isArray(draft.facts) && draft.facts.length > 0;
+  const hasProfile = [
+    draft.profile.company_name,
+    draft.profile.main_business,
+    draft.profile.products_services,
+    draft.profile.core_advantages,
+    draft.profile.target_keywords,
+  ].some(hasProfileValue);
+  return hasFacts || hasProfile;
+}
+
 function buildLongTailPreview(profile: GeoAgentEnterpriseProfileInput) {
   const rawKeywords = String(profile.target_keywords ?? '');
   const keywords = rawKeywords
@@ -638,14 +623,9 @@ async function ensureDraftEnterpriseProfile(seedText: string) {
 
 export function AgentStudio() {
   const { currentEnterprise, hasEnterprises, isLoadingEnterprises, refreshEnterprises, setEnterpriseId } = useEnterprise();
-  const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
-  const [isOptionsOpen, setIsOptionsOpen] = useState(false);
   const [isSkillsOpen, setIsSkillsOpen] = useState(false);
   const [skills, setSkills] = useState<GeoAgentSkill[]>([]);
   const [selectedSkill, setSelectedSkill] = useState<GeoAgentSkill | null>(null);
-  const [selectedModel, setSelectedModel] = useState(MODEL_CAPABILITIES[0].label);
-  const [deepThinking, setDeepThinking] = useState(true);
-  const [webSearch, setWebSearch] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -660,10 +640,6 @@ export function AgentStudio() {
     () => typeof window !== 'undefined' && localStorage.getItem(CONVERSATION_HISTORY_RESET_KEY) !== 'done'
   );
 
-  const selectedCapability = useMemo(
-    () => MODEL_CAPABILITIES.find((model) => model.label === selectedModel) ?? MODEL_CAPABILITIES[0],
-    [selectedModel]
-  );
   const currentConversationStorageKey = conversationStorageKey(currentEnterprise?.id);
 
   useEffect(() => {
@@ -712,11 +688,6 @@ export function AgentStudio() {
       return null;
     }
   };
-
-  useEffect(() => {
-    setDeepThinking(selectedCapability.defaultDeepThinking);
-    setWebSearch(selectedCapability.defaultWebSearch);
-  }, [selectedCapability]);
 
   useEffect(() => {
     if (!window.geoAgent?.getConfigStatus) {
@@ -769,11 +740,11 @@ export function AgentStudio() {
     if (geoProject?.current_phase !== 'ready_for_check') {
       return;
     }
-    const platform = selectedCapability.providerKey;
+    const platform = AUTO_PLATFORM;
     if (hasPhaseTwoMessageFor(messages, geoProject, platform)) {
       return;
     }
-    const key = phaseTwoPromptKey(geoProject.project_id, conversationId, selectedCapability.providerKey);
+    const key = phaseTwoPromptKey(geoProject.project_id, conversationId, AUTO_PLATFORM);
     if (readPhaseTwoPromptKeys().includes(key)) {
       return;
     }
@@ -781,7 +752,7 @@ export function AgentStudio() {
       return;
     }
     appendPhaseTwoPrompt(geoProject, { platform }).catch(() => undefined);
-  }, [conversationId, geoProject?.id, geoProject?.current_phase, messages.length, selectedCapability.providerKey]);
+  }, [conversationId, geoProject?.id, geoProject?.current_phase, messages.length, AUTO_PLATFORM]);
 
   useEffect(() => {
     if (isConversationHistoryResetting) {
@@ -847,8 +818,6 @@ export function AgentStudio() {
     const closeMenusWhenOutsideInput = (event: PointerEvent | FocusEvent) => {
       const target = event.target as Node;
       if (!inputShellRef.current?.contains(target)) {
-        setIsModelDropdownOpen(false);
-        setIsOptionsOpen(false);
         setIsSkillsOpen(false);
       }
     };
@@ -877,9 +846,7 @@ export function AgentStudio() {
     }
 
     const assistantId = `assistant-${Date.now()}`;
-    const shouldShowReasoning = shouldUseDispatcher
-      ? true
-      : selectedCapability.supportsDeepThinking ? deepThinking : false;
+    const shouldShowReasoning = shouldUseDispatcher;
     setInputValue('');
     setSelectedSkill(null);
     setIsSending(true);
@@ -904,26 +871,108 @@ export function AgentStudio() {
         ? undefined
         : hasEnterprises ? currentEnterprise.id : undefined;
       if ((hasFiles || isKnowledgeIngestSkill) && knowledgeIntent !== 'chat') {
-        if (!window.geoAgent.createKnowledgeDraft) {
-          throw new Error('当前桌面端尚未暴露知识库草稿接口，请完全关闭并重新启动 Electron 后再试。');
+        if (!window.geoAgent.createKnowledgeDraft && !window.geoAgent.createKnowledgeDraftStream) {
+          throw new Error('Knowledge draft API is not available. Please restart Electron and try again.');
         }
         const assets = await Promise.all(files.map(filePartToKnowledgeAsset));
-        const draft = await window.geoAgent.createKnowledgeDraft({
+        const draftPayload = {
           message: content,
           conversation_id: conversationId,
           intent: knowledgeIntent,
           project_id: activeProjectId,
           skill_id: activeSkill?.id,
           assets,
-        });
+        };
+        let draft: GeoAgentKnowledgeDraft;
+        if (window.geoAgent.createKnowledgeDraftStream) {
+          const finalEvent = await window.geoAgent.createKnowledgeDraftStream(draftPayload, (event) => {
+            if (event.type === 'status' && event.message) {
+              setMessages((current) => updateMessage(current, assistantId, {
+                reasoning: event.message,
+                status: 'streaming',
+              }));
+            }
+            if ((event.type === 'model_start' || event.type === 'model_status') && (event.message || event.provider || event.model)) {
+              const debugLine = [
+                event.message,
+                event.provider && event.model ? `${event.provider}/${event.model}` : null,
+                event.api_family,
+                event.request_id ? `request: ${event.request_id}` : null,
+                event.http_status ? `HTTP ${event.http_status}` : null,
+                event.latency_ms ? `${event.latency_ms}ms` : null,
+              ].filter(Boolean).join(' · ');
+              setMessages((current) => updateMessage(current, assistantId, (message) => ({
+                ...message,
+                reasoning: event.message || message.reasoning,
+                modelDebugLines: debugLine
+                  ? [...(message.modelDebugLines ?? []), debugLine].slice(-8)
+                  : message.modelDebugLines,
+                provider: event.provider || message.provider,
+                model: event.model || message.model,
+                status: 'streaming',
+              })));
+            }
+            if (event.type === 'delta' && event.text) {
+              setMessages((current) => appendMessageText(current, assistantId, event.text ?? '', 'reasoningContent'));
+            }
+            if (event.type === 'reasoning_delta' && event.text) {
+              setMessages((current) => appendMessageText(current, assistantId, event.text ?? '', 'reasoningContent'));
+            }
+            if (event.type === 'draft_section' && event.section) {
+              setMessages((current) => updateMessage(current, assistantId, (message) => ({
+                ...message,
+                reasoning: event.message || message.reasoning,
+                draftStreamSections: {
+                  ...(message.draftStreamSections ?? {}),
+                  [event.section ?? 'unknown']: Array.isArray(event.items) ? event.items.length : 0,
+                },
+                status: 'streaming',
+              })));
+            }
+            if (event.type === 'result' && event.draft) {
+              setMessages((current) => updateMessage(current, assistantId, {
+                knowledgeDraft: event.draft,
+                status: 'streaming',
+              }));
+            }
+            if (event.type === 'error' && event.error) {
+              setMessages((current) => updateMessage(current, assistantId, {
+                content: event.error ?? 'Knowledge draft creation failed.',
+                knowledgeDraft: event.draft,
+                confirmationState: 'output-available',
+                status: 'error',
+                error: event.error,
+              }));
+            }
+          });
+          if (finalEvent.type === 'error' || !finalEvent.draft) {
+            throw new Error(finalEvent.error || 'Knowledge draft creation failed.');
+          }
+          draft = finalEvent.draft;
+        } else {
+          draft = await window.geoAgent.createKnowledgeDraft(draftPayload);
+        }
+        const canConfirmDraft = isConfirmableKnowledgeDraft(draft);
+        if (!canConfirmDraft) {
+          const errorText = draft.error_message || draft.warnings?.[0] || 'The model did not extract traceable enterprise facts. Please provide more complete materials and try again.';
+          setMessages((current) => updateMessage(current, assistantId, {
+            content: errorText,
+            reasoning: 'Knowledge draft creation failed, so confirmation has been blocked.',
+            knowledgeDraft: draft,
+            confirmationState: 'output-available',
+            status: 'error',
+            error: errorText,
+          }));
+          return;
+        }
         if (draft.conversation_id) {
           setConversationId(draft.conversation_id);
           localStorage.setItem(currentConversationStorageKey, draft.conversation_id);
           window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: draft.conversation_id } }));
         }
         setMessages((current) => updateMessage(current, assistantId, {
-          content: '我已根据资料生成企业知识库草稿。请先核对下方模板内容，确认后我再正式建立知识库并生成本地索引。',
-          reasoning: `已解析 ${files.length} 个附件，调度模型已按知识库录入技能生成结构化草稿。确认前不会写入正式企业知识库。`,
+          content: 'Knowledge draft created from your materials. Please review it before confirming the local knowledge base.',
+          reasoning: `Parsed ${files.length} attachment(s) and generated a structured knowledge draft. Nothing is written to the official knowledge base before confirmation.`,
           knowledgeDraft: draft,
           confirmationState: 'approval-requested',
           status: 'complete',
@@ -933,29 +982,21 @@ export function AgentStudio() {
 
       const selectedProvider = shouldUseDispatcher
         ? configStatus?.providers.dispatcher
-        : configStatus?.providers[selectedCapability.providerKey];
+        : configStatus?.providers[AUTO_PLATFORM];
       if (selectedProvider && !selectedProvider.configured) {
         throw new Error(
-          `${shouldUseDispatcher ? '鲸杉GEO-Agent 调度模型' : selectedCapability.label} 尚未读取到 API Key。请确认项目根目录 .env 已配置对应 key；如果刚修改过 .env，请重启桌面端后再试。`
+          `${shouldUseDispatcher ? '鲸杉GEO-Agent 调度模型' : 'Auto'} 尚未读取到 API Key。请确认项目根目录 .env 已配置对应 key；如果刚修改过 .env，请重启桌面端后再试。`
         );
       }
 
       const options = {
-        deepThinking: shouldShowReasoning,
-        webSearch: shouldUseDispatcher ? false : selectedCapability.supportsWebSearch ? webSearch : false,
-        searchContext: !shouldUseDispatcher && selectedCapability.supportsWebSearch && webSearch
-          ? buildSearchContext(content, currentEnterprise)
-          : undefined,
         projectId: activeProjectId,
         skillId: activeSkill?.id,
       };
-      const requestModel = shouldUseDispatcher ? '鲸杉GEO-Agent 调度' : selectedModel;
-
       if (window.geoAgent.sendChatStream) {
         const finalEvent = await window.geoAgent.sendChatStream(
           content,
           conversationId,
-          requestModel,
           options,
           (event) => {
             if (event.type === 'meta' && event.conversation_id) {
@@ -964,7 +1005,7 @@ export function AgentStudio() {
             }
             if (event.type === 'status' && event.message) {
               setMessages((current) => updateMessage(current, assistantId, {
-                reasoning: options.deepThinking
+                reasoning: shouldShowReasoning
                   ? (hasFiles ? `已接收 ${files.length} 个附件，正在解析并写入知识库。${event.message}` : event.message)
                   : undefined,
                 status: 'streaming',
@@ -1005,15 +1046,15 @@ export function AgentStudio() {
                 searchQueries: event.search_queries ?? [],
                 searchActions: event.search_actions ?? [],
                 searchUsage: event.search_usage ?? {},
-                reasoningContent: options.deepThinking
+                reasoningContent: shouldShowReasoning
                   ? message.reasoningContent || event.reasoning_content || undefined
                   : undefined,
                 provider: event.provider,
                 model: event.model,
                 error: event.error,
-                reasoning: options.deepThinking ? `${hasFiles ? `已解析 ${files.length} 个附件并写入企业知识库。` : ''}${buildAssistantReasoning(event.provider, event.model, {
-                  deepThinking: options.deepThinking,
-                  webSearch: selectedCapability.supportsWebSearch && webSearch,
+                reasoning: shouldShowReasoning ? `${hasFiles ? `已解析 ${files.length} 个附件并写入企业知识库。` : ''}${buildAssistantReasoning(event.provider, event.model, {
+                  deepThinking: shouldShowReasoning,
+                  webSearch: false,
                   dispatcher: shouldUseDispatcher,
                   error: Boolean(event.error),
                 })}` : undefined,
@@ -1025,12 +1066,12 @@ export function AgentStudio() {
         localStorage.setItem(currentConversationStorageKey, finalEvent.conversation_id);
         window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: finalEvent.conversation_id } }));
       } else {
-        const response = await window.geoAgent.sendChat(content, conversationId, requestModel, options);
+        const response = await window.geoAgent.sendChat(content, conversationId, options);
         setConversationId(response.conversation_id);
         localStorage.setItem(currentConversationStorageKey, response.conversation_id);
-        const finalReasoning = options.deepThinking ? `${hasFiles ? `已解析 ${files.length} 个附件并写入企业知识库。` : ''}${buildAssistantReasoning(response.provider, response.model, {
-          deepThinking: options.deepThinking,
-          webSearch: selectedCapability.supportsWebSearch && webSearch,
+        const finalReasoning = shouldShowReasoning ? `${hasFiles ? `已解析 ${files.length} 个附件并写入企业知识库。` : ''}${buildAssistantReasoning(response.provider, response.model, {
+          deepThinking: shouldShowReasoning,
+          webSearch: false,
           dispatcher: shouldUseDispatcher,
           error: Boolean(response.error),
         })}` : undefined;
@@ -1047,7 +1088,7 @@ export function AgentStudio() {
           error: response.error,
           status: 'streaming',
         }));
-        if (options.deepThinking && response.reasoning_content) {
+        if (shouldShowReasoning && response.reasoning_content) {
           await typeMessageText(setMessages, assistantId, response.reasoning_content, 'reasoningContent');
         }
         await typeMessageText(setMessages, assistantId, response.content);
@@ -1079,7 +1120,7 @@ export function AgentStudio() {
     if (project.current_phase !== 'ready_for_check' && !options?.force) {
       return;
     }
-    const platform = options?.platform ?? selectedCapability.providerKey;
+    const platform = options?.platform ?? AUTO_PLATFORM;
     const key = phaseTwoPromptKey(project.project_id, conversationId, platform);
     if (!options?.force && readPhaseTwoPromptKeys().includes(key)) {
       return;
@@ -1113,7 +1154,7 @@ export function AgentStudio() {
     }
   };
 
-  const confirmPhaseTwo = async (messageId: string, project: GeoAgentGeoProject, platform: 'doubao' | 'deepseek' = selectedCapability.providerKey) => {
+  const confirmPhaseTwo = async (messageId: string, project: GeoAgentGeoProject, platform: 'doubao' | 'deepseek' = AUTO_PLATFORM) => {
     if (!window.geoAgent?.confirmGeoPhaseTwo) {
       setMessages((current) => updateMessage(current, messageId, {
         content: '桌面端主进程接口尚未刷新，请完全关闭并重新启动 Electron 后再启动阶段二。',
@@ -1206,7 +1247,7 @@ export function AgentStudio() {
     }
   };
 
-  const cancelPhaseTwo = async (messageId: string, project: GeoAgentGeoProject, platform: 'doubao' | 'deepseek' = selectedCapability.providerKey) => {
+  const cancelPhaseTwo = async (messageId: string, project: GeoAgentGeoProject, platform: 'doubao' | 'deepseek' = AUTO_PLATFORM) => {
     let updated = project;
     if (window.geoAgent?.cancelGeoPhaseTwo) {
       updated = await window.geoAgent.cancelGeoPhaseTwo(project.id, platform, messageId).catch(() => project);
@@ -1584,7 +1625,7 @@ export function AgentStudio() {
         status: 'complete',
       }));
       if (nextGeoProject?.current_phase === 'ready_for_check') {
-        appendPhaseTwoPrompt(nextGeoProject, { force: true, platform: selectedCapability.providerKey }).catch(() => undefined);
+        appendPhaseTwoPrompt(nextGeoProject, { force: true, platform: AUTO_PLATFORM }).catch(() => undefined);
       }
     } catch (error) {
       setMessages((current) => updateMessage(current, messageId, {
@@ -1616,8 +1657,6 @@ export function AgentStudio() {
   const selectSkill = (skill: GeoAgentSkill) => {
     setSelectedSkill(skill);
     setIsSkillsOpen(false);
-    setIsOptionsOpen(false);
-    setIsModelDropdownOpen(false);
   };
 
   const startNewConversation = (options?: { silent?: boolean }) => {
@@ -1668,7 +1707,7 @@ export function AgentStudio() {
   };
 
   const showEmptyState = messages.length === 0;
-  const selectedPlatformWorkflow = workflowState?.platforms[selectedCapability.providerKey];
+  const selectedPlatformWorkflow = workflowState?.platforms[AUTO_PLATFORM];
   const selectedStageTwoStatus = selectedPlatformWorkflow?.stages.stage_2?.status;
   const selectedStageThreeStatus = selectedPlatformWorkflow?.stages.stage_3?.status;
   const selectedStageFourStatus = selectedPlatformWorkflow?.stages.stage_4?.status;
@@ -1863,8 +1902,6 @@ export function AgentStudio() {
             value={inputValue}
             onChange={(event) => setInputValue(event.currentTarget.value)}
             onFocus={() => {
-              setIsModelDropdownOpen(false);
-              setIsOptionsOpen(false);
               setIsSkillsOpen(false);
             }}
             className="min-h-[50px] max-h-[160px] w-full resize-none border-none bg-transparent px-2 py-1 text-[15px] leading-relaxed text-[#252525] shadow-none outline-none placeholder:text-[#85817b] focus-visible:ring-0 dark:text-[#f1f1f1] dark:placeholder:text-[#9d9d9d]"
@@ -1877,26 +1914,12 @@ export function AgentStudio() {
               <PromptInputButton
                 className="size-7 rounded-full text-[#6f6b64] hover:bg-[#eeeeeb] hover:text-[#34322e] dark:text-[#b6b6b6] dark:hover:bg-[#2d2d2d] dark:hover:text-[#f1f1f1]"
                 onClick={() => {
-                  setIsModelDropdownOpen(false);
-                  setIsOptionsOpen(false);
                   setIsSkillsOpen((current) => !current);
                 }}
                 tooltip="选择技能"
               >
                 <Library className="size-3.5 stroke-[2.2]" />
               </PromptInputButton>
-              <PromptInputButton
-                className="size-7 rounded-full text-[#6f6b64] hover:bg-[#eeeeeb] hover:text-[#34322e] dark:text-[#b6b6b6] dark:hover:bg-[#2d2d2d] dark:hover:text-[#f1f1f1]"
-                onClick={() => {
-                  setIsModelDropdownOpen(false);
-                  setIsSkillsOpen(false);
-                  setIsOptionsOpen((current) => !current);
-                }}
-                tooltip="配置选项"
-              >
-                <SlidersHorizontal className="size-3.5 stroke-[2.2]" />
-              </PromptInputButton>
-
               <AnimatePresence>
                 {isSkillsOpen && (
                   <motion.div
@@ -1935,97 +1958,12 @@ export function AgentStudio() {
                     )}
                   </motion.div>
                 )}
-                {isOptionsOpen && (
-                  <motion.div
-                    initial={{ opacity: 0, scale: 0.96, y: 8 }}
-                    animate={{ opacity: 1, scale: 1, y: 0 }}
-                    exit={{ opacity: 0, scale: 0.96, y: 8 }}
-                    transition={{ duration: 0.12 }}
-                    className="absolute bottom-full left-0 z-50 mb-2 w-[252px] max-w-[calc(100vw-48px)] rounded-xl border border-[#c9c3b8] !bg-[#f7f4ee] p-1.5 text-[#26231f] opacity-100 shadow-[0_18px_44px_rgba(40,34,26,0.22)] backdrop-blur-none dark:border-[#5a5a5a] dark:!bg-[#2a2a2a] dark:text-[#f4f4f4]"
-                  >
-                    <OptionToggle
-                      checked={deepThinking}
-                      disabled={!selectedCapability.supportsDeepThinking}
-                      icon={Brain}
-                      label="深度思考"
-                      title={selectedCapability.supportsDeepThinking ? '切换深度思考' : '当前模型不支持深度思考'}
-                      onChange={() => {
-                        setDeepThinking((current) => !current);
-                      }}
-                    />
-                    <OptionToggle
-                      checked={webSearch}
-                      disabled={!selectedCapability.supportsWebSearch}
-                      icon={Search}
-                      label="联网搜索"
-                      title={selectedCapability.supportsWebSearch ? '切换联网搜索' : '当前模型不支持联网搜索'}
-                      onChange={() => {
-                        setWebSearch((current) => !current);
-                      }}
-                    />
-                  </motion.div>
-                )}
               </AnimatePresence>
             </PromptInputTools>
 
             <div className="flex items-center gap-2.5">
-              <div className="relative">
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={() => {
-                    setIsSkillsOpen(false);
-                    setIsOptionsOpen(false);
-                    setIsModelDropdownOpen(!isModelDropdownOpen);
-                  }}
-                  className="flex cursor-pointer items-center gap-1 rounded-2xl bg-transparent px-2.5 py-1 font-sans text-[11px] font-semibold text-[#6f6b64] transition-colors hover:bg-[#eeeeeb] hover:text-[#34322e] dark:text-[#b6b6b6] dark:hover:bg-[#2d2d2d] dark:hover:text-[#f1f1f1]"
-                  type="button"
-                >
-                  {selectedCapability.shortLabel}
-                  <ChevronDown className={cn('size-3 transition-transform', isModelDropdownOpen && 'rotate-180')} />
-                </motion.button>
-
-                <AnimatePresence>
-                  {isModelDropdownOpen && (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.95, y: -5 }}
-                      animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.95, y: -5 }}
-                      transition={{ duration: 0.12 }}
-                      className="absolute right-0 bottom-full z-50 mb-2 max-h-[300px] w-[276px] max-w-[calc(100vw-48px)] overflow-y-auto rounded-xl border border-[#c9c3b8] !bg-[#f7f4ee] p-1.5 text-[#26231f] opacity-100 shadow-[0_18px_44px_rgba(40,34,26,0.24)] backdrop-blur-none dark:border-[#5a5a5a] dark:!bg-[#2a2a2a] dark:text-[#f4f4f4]"
-                    >
-                      <div className="flex items-center gap-2 px-2.5 pb-1 pt-1 text-[12px] font-semibold text-[#6c6258] dark:text-[#bdbdbd]">
-                        <span>Select a model</span>
-                        <span className="rounded-md bg-[#e7e1d8] px-1.5 py-0.5 text-[10px] text-[#756b60] dark:bg-[#3b3b3b] dark:text-[#d0d0d0]">
-                          Beta
-                        </span>
-                      </div>
-                      {MODEL_CAPABILITIES.map((model) => (
-                        <button
-                          key={model.label}
-                          onClick={() => {
-                            setSelectedModel(model.label);
-                            setIsModelDropdownOpen(false);
-                            setIsOptionsOpen(false);
-                          }}
-                          className={cn(
-                            'flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] font-medium transition-colors',
-                            selectedModel === model.label
-                              ? 'bg-[#ebe5dc] text-[#26231f] dark:bg-[#3a3a3a] dark:text-[#f8f8f8]'
-                              : 'text-[#3f3932] hover:bg-[#ebe5dc] dark:text-[#f0f0f0] dark:hover:bg-[#3a3a3a]'
-                          )}
-                          type="button"
-                        >
-                          <span className="flex min-w-0 items-center gap-3">
-                            <ModelIcon model={model} />
-                            <span className="truncate">{model.label}</span>
-                          </span>
-                          {selectedModel === model.label && <Check className="size-3.5 shrink-0" />}
-                        </button>
-                      ))}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+              <div className="flex items-center gap-1 rounded-2xl bg-transparent px-2.5 py-1 font-sans text-[11px] font-semibold uppercase tracking-[0.18em] text-[#6f6b64] dark:text-[#b6b6b6]" title="Task policy chooses model and network mode automatically">
+                Auto
               </div>
 
               <PromptInputButton
@@ -2173,6 +2111,27 @@ const ChatBubble: React.FC<{
             sources={message.sources ?? []}
           />
         )}
+        {((message.modelDebugLines && message.modelDebugLines.length > 0) || message.draftStreamSections) && (
+          <div className="mb-4 space-y-2 border-l border-[#ded8cf] pl-3 text-[12px] leading-relaxed text-[#77716a] dark:border-[#3a3a3a] dark:text-[#a8adb4]">
+            {message.modelDebugLines?.map((line, index) => (
+              <div key={`${line}-${index}`} className="font-mono">
+                {line}
+              </div>
+            ))}
+            {message.draftStreamSections && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                {Object.entries(message.draftStreamSections).map(([section, count]) => (
+                  <span
+                    className="rounded-full border border-[#ded8cf] px-2 py-0.5 dark:border-[#3a3a3a]"
+                    key={section}
+                  >
+                    {section}: {count}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {message.knowledgeDraft && (
           <KnowledgeDraftPreview
             draft={message.knowledgeDraft}
@@ -2214,7 +2173,7 @@ const ChatBubble: React.FC<{
           <MessageResponse className="max-w-none">{message.content}</MessageResponse>
         )}
       </MessageContent>
-      {message.knowledgeDraft && message.confirmationState === 'approval-requested' && (
+      {message.knowledgeDraft && message.confirmationState === 'approval-requested' && isConfirmableKnowledgeDraft(message.knowledgeDraft) && (
         <AssistantConfirmationBar
           approved={message.confirmationApproved}
           id={message.knowledgeDraft.id}
@@ -2333,9 +2292,15 @@ const KnowledgeDraftPreview: React.FC<{
   const profile = draft.profile;
   const fileNames = draft.assets.map((asset) => asset.filename);
   const previewLongTail = buildLongTailPreview(profile);
+  const isFailed = !isConfirmableKnowledgeDraft(draft);
 
   return (
     <div className="mb-5 text-[#2f2f2f] dark:text-[#f1f1f1]">
+      {isFailed && (
+        <div className="mb-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] leading-relaxed text-red-700 dark:border-red-900/50 dark:bg-red-950/20 dark:text-red-200">
+          {draft.error_message || draft.warnings?.[0] || 'Knowledge draft creation failed. Please upload valid enterprise materials and try again.'}
+        </div>
+      )}
       <div className="mb-4 flex flex-col gap-1 border-b border-outline-variant/20 pb-3">
         <div className="flex items-center gap-2 text-[14px] font-bold text-primary">
           <Database className="size-4 text-secondary" />
@@ -2597,7 +2562,7 @@ const GeoCheckReportCard: React.FC<{ report: GeoAgentGeoReport }> = ({ report })
 const SourceDiscoveryCard: React.FC<{ discovery: GeoAgentGeoSourceDiscovery }> = ({ discovery }) => {
   const platformLabel = platformLabelFor(discovery.platform === 'deepseek' ? 'deepseek' : 'doubao');
   const verifiedSources = (discovery.discovery.verified_observed_sources ?? discovery.discovery.observed_citation_sources ?? []) as unknown[];
-  const candidateSources = (discovery.discovery.candidate_sources ?? discovery.discovery.ai_recommended_sources ?? []) as unknown[];
+  const candidateSources = (discovery.discovery.channel_priorities ?? discovery.discovery.candidate_sources ?? discovery.discovery.ai_recommended_sources ?? []) as unknown[];
   if (discovery.discovery.status === 'failed') {
     return (
       <div className="mb-5 rounded-2xl bg-red-50 p-4 text-[13px] text-red-700 dark:bg-red-950/30 dark:text-red-200">
@@ -3056,48 +3021,6 @@ const formatUsageValue = (value: unknown) => {
   return '已调用';
 };
 
-const LOCATION_ALIASES: Array<{ city: string; region: string; aliases: string[] }> = [
-  { city: '成都', region: '四川', aliases: ['成都', '成都市'] },
-  { city: '北京', region: '北京', aliases: ['北京', '北京市'] },
-  { city: '上海', region: '上海', aliases: ['上海', '上海市'] },
-  { city: '广州', region: '广东', aliases: ['广州', '广州市'] },
-  { city: '深圳', region: '广东', aliases: ['深圳', '深圳市'] },
-  { city: '杭州', region: '浙江', aliases: ['杭州', '杭州市'] },
-  { city: '重庆', region: '重庆', aliases: ['重庆', '重庆市'] },
-  { city: '西安', region: '陕西', aliases: ['西安', '西安市'] },
-  { city: '武汉', region: '湖北', aliases: ['武汉', '武汉市'] },
-  { city: '南京', region: '江苏', aliases: ['南京', '南京市'] },
-];
-
-const buildSearchContext = (
-  message: string,
-  enterprise: { name?: string; tag?: string; industry?: string; desc?: string }
-): SearchContext | undefined => {
-  const explicit = detectLocation(message);
-  if (explicit) {
-    return explicit;
-  }
-
-  const enterpriseText = [enterprise.name, enterprise.tag, enterprise.industry, enterprise.desc]
-    .filter(Boolean)
-    .join(' ');
-  return detectLocation(enterpriseText);
-};
-
-const detectLocation = (text: string): SearchContext | undefined => {
-  const match = LOCATION_ALIASES.find((location) =>
-    location.aliases.some((alias) => text.includes(alias))
-  );
-  if (!match) {
-    return undefined;
-  }
-  return {
-    country: '中国',
-    region: match.region,
-    city: match.city,
-  };
-};
-
 const ThinkingIndicator: React.FC<{ label: string }> = ({ label }) => (
   <div className="flex items-center gap-2.5 text-on-surface-variant">
     <span className="text-[13px] font-medium">{label || '正在思考'}</span>
@@ -3253,18 +3176,6 @@ const QuickSuggestion: React.FC<{
     {text}
   </Suggestion>
 );
-
-const ModelIcon: React.FC<{ model: ModelCapability }> = ({ model }) => {
-  if (model.providerKey === 'doubao') {
-    return <Globe className="size-4 shrink-0 text-[#2f7ed8] dark:text-[#8abfff]" />;
-  }
-
-  if (model.providerKey === 'deepseek') {
-    return <Search className="size-4 shrink-0 text-[#2f2f2f] dark:text-[#f1f1f1]" />;
-  }
-
-  return <Brain className="size-4 shrink-0 text-[#2f2f2f] dark:text-[#f1f1f1]" />;
-};
 
 function platformLabelFor(platform: 'doubao' | 'deepseek'): string {
   return platform === 'doubao' ? '豆包' : 'DeepSeek';

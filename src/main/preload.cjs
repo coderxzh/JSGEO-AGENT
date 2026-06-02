@@ -30,7 +30,11 @@ function invokeStream(channelName, payload, onEvent) {
 contextBridge.exposeInMainWorld('geoAgent', {
   healthCheck: () => ipcRenderer.invoke('geo-agent:health-check'),
   getConfigStatus: () => ipcRenderer.invoke('geo-agent:get-config-status'),
-  sendChatStream: (message, conversationId, selectedModel, options = {}, onEvent) => {
+  sendChatStream: (message, conversationId, selectedModelOrOptions = null, optionsOrEvent = {}, maybeOnEvent) => {
+    const legacySignature = typeof maybeOnEvent === 'function';
+    const selectedModel = legacySignature ? selectedModelOrOptions : null;
+    const options = legacySignature ? (optionsOrEvent || {}) : (selectedModelOrOptions || {});
+    const onEvent = legacySignature ? maybeOnEvent : optionsOrEvent;
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const channel = `geo-agent:chat-stream:${requestId}`;
     const payload = {
@@ -38,9 +42,6 @@ contextBridge.exposeInMainWorld('geoAgent', {
       conversation_id: conversationId,
       selected_model: selectedModel,
       skill_id: options.skillId,
-      deep_thinking: options.deepThinking,
-      web_search: options.webSearch,
-      search_context: options.searchContext,
       project_id: options.projectId,
     };
 
@@ -67,17 +68,17 @@ contextBridge.exposeInMainWorld('geoAgent', {
       });
     });
   },
-  sendChat: (message, conversationId, selectedModel, options = {}) =>
-    ipcRenderer.invoke('geo-agent:send-chat', {
+  sendChat: (message, conversationId, selectedModelOrOptions = null, maybeOptions = {}) => {
+    const selectedModel = typeof selectedModelOrOptions === 'string' ? selectedModelOrOptions : null;
+    const options = typeof selectedModelOrOptions === 'string' ? maybeOptions : (selectedModelOrOptions || {});
+    return ipcRenderer.invoke('geo-agent:send-chat', {
       message,
       conversation_id: conversationId,
       selected_model: selectedModel,
       skill_id: options.skillId,
-      deep_thinking: options.deepThinking,
-      web_search: options.webSearch,
-      search_context: options.searchContext,
       project_id: options.projectId,
-    }),
+    });
+  },
   getProjects: () => ipcRenderer.invoke('geo-agent:get-projects'),
   createProject: (payload) => ipcRenderer.invoke('geo-agent:create-project', payload),
   getProject: (projectId) => ipcRenderer.invoke('geo-agent:get-project', projectId),
@@ -99,6 +100,8 @@ contextBridge.exposeInMainWorld('geoAgent', {
   runGeoSourceDiscoveryStream: (geoProjectId, platform, fallbackReport = null, messageId = null, conversationId = null, parentMessageId = null, onEvent) => invokeStream('geo-agent:run-geo-source-discovery-stream', { geoProjectId, platform, fallbackReport, messageId, conversationId, parentMessageId }, onEvent),
   getLatestGeoSourceDiscovery: (geoProjectId, platform) => ipcRenderer.invoke('geo-agent:get-latest-geo-source-discovery', geoProjectId, platform),
   getGeoSourceDiscovery: (discoveryId) => ipcRenderer.invoke('geo-agent:get-geo-source-discovery', discoveryId),
+  getSourceDiscoveries: (projectId, platform = null) => ipcRenderer.invoke('geo-agent:get-source-discoveries', { projectId, platform }),
+  confirmSourceDiscovery: (discoveryId) => ipcRenderer.invoke('geo-agent:confirm-source-discovery', discoveryId),
   runGeoArticleDraft: (geoProjectId, platform, articleType, options = {}) => ipcRenderer.invoke('geo-agent:run-geo-article-draft', geoProjectId, platform, articleType, options),
   runGeoSupportArticles: (geoProjectId, platform, options = {}) => ipcRenderer.invoke('geo-agent:run-geo-support-articles', geoProjectId, platform, options),
   runGeoSupportArticlesStream: (geoProjectId, platform, options = {}, onEvent) => invokeStream('geo-agent:run-geo-support-articles-stream', { geoProjectId, platform, options }, onEvent),
@@ -120,6 +123,7 @@ contextBridge.exposeInMainWorld('geoAgent', {
   deleteKnowledgeProfile: (projectId) => ipcRenderer.invoke('geo-agent:delete-knowledge-profile', projectId),
   createKnowledgeAsset: (asset) => ipcRenderer.invoke('geo-agent:create-knowledge-asset', asset),
   createKnowledgeDraft: (draft) => ipcRenderer.invoke('geo-agent:create-knowledge-draft', draft),
+  createKnowledgeDraftStream: (draft, onEvent) => invokeStream('geo-agent:create-knowledge-draft-stream', draft, onEvent),
   confirmKnowledgeDraft: (draftId, profile) => ipcRenderer.invoke('geo-agent:confirm-knowledge-draft', { draftId, profile }),
   rejectKnowledgeDraft: (draftId) => ipcRenderer.invoke('geo-agent:reject-knowledge-draft', draftId),
   reindexKnowledge: (projectId) => ipcRenderer.invoke('geo-agent:reindex-knowledge', projectId),

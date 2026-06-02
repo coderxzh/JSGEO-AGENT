@@ -128,6 +128,36 @@ declare global {
     updated_at: string;
   };
 
+  type GeoAgentKnowledgeDraftFact = {
+    id: string;
+    field: string;
+    label: string;
+    value: string;
+    source_file?: string | null;
+    source_document_id?: string | null;
+    quote?: string | null;
+    confidence: number;
+    extraction?: string;
+  };
+
+  type GeoAgentKnowledgeDraftFieldReview = {
+    field: string;
+    label: string;
+    value: string;
+    confirmed: boolean;
+    confidence: number;
+    source_fact_ids: string[];
+    warning?: string | null;
+  };
+
+  type GeoAgentKnowledgeDraftSourceQuote = {
+    id: string;
+    source_file?: string | null;
+    source_document_id?: string | null;
+    quote: string;
+    fields: string[];
+  };
+
   type GeoAgentKnowledgeDraft = {
     id: string;
     intent: string;
@@ -136,9 +166,16 @@ declare global {
     assistant_message_id?: string | null;
     status: string;
     profile: GeoAgentEnterpriseProfileInput;
+    facts?: GeoAgentKnowledgeDraftFact[];
+    field_reviews?: GeoAgentKnowledgeDraftFieldReview[];
     missing_fields: string[];
     confidence: Record<string, unknown>;
     source_summary: Record<string, unknown>;
+    source_quotes?: GeoAgentKnowledgeDraftSourceQuote[];
+    warnings?: string[];
+    error_message?: string | null;
+    extraction_status?: string;
+    extraction_model?: string;
     assets: GeoAgentKnowledgeDraftAsset[];
     created_at: string;
     updated_at: string;
@@ -257,7 +294,19 @@ declare global {
     id: string;
     geo_project_id: string;
     enterprise_project_id: string;
+    project_id?: string;
+    question_set_id?: string | null;
     platform: 'doubao' | 'deepseek' | string;
+    status?: 'completed' | 'confirmed' | 'failed' | string;
+    source_name?: string | null;
+    source_url?: string | null;
+    source_type?: string | null;
+    content_format?: string | null;
+    priority_score?: number;
+    reason?: string | null;
+    observed_in_answers?: string | null;
+    recommended_topics?: string[];
+    confirmed_at?: string | null;
     discovery: {
       summary?: string;
       status?: 'completed' | 'failed' | string;
@@ -265,6 +314,8 @@ declare global {
 	      observed_citation_sources?: unknown[];
 	      verified_observed_sources?: unknown[];
 	      candidate_sources?: unknown[];
+	      channel_priorities?: unknown[];
+	      content_distribution_strategy?: Record<string, unknown>;
 	      source_scores?: unknown[];
 	      missing_evidence?: string[];
 	      [key: string]: unknown;
@@ -360,11 +411,7 @@ declare global {
       sendChat: (
         message: string,
         conversationId?: string | null,
-        selectedModel?: string | null,
         options?: {
-          deepThinking?: boolean;
-          webSearch?: boolean;
-          searchContext?: GeoAgentSearchContext;
           projectId?: string;
           skillId?: string;
         }
@@ -384,11 +431,7 @@ declare global {
       sendChatStream?: (
         message: string,
         conversationId: string | null | undefined,
-        selectedModel: string | null | undefined,
         options: {
-          deepThinking?: boolean;
-          webSearch?: boolean;
-          searchContext?: GeoAgentSearchContext;
           projectId?: string;
           skillId?: string;
         },
@@ -490,6 +533,11 @@ declare global {
       ) => Promise<{ type: 'done'; status?: string }>;
       getLatestGeoSourceDiscovery: (geoProjectId: string, platform: 'doubao' | 'deepseek') => Promise<GeoAgentGeoSourceDiscovery>;
       getGeoSourceDiscovery: (discoveryId: string) => Promise<GeoAgentGeoSourceDiscovery>;
+      getSourceDiscoveries: (
+        projectId: string,
+        platform?: 'doubao' | 'deepseek' | string | null
+      ) => Promise<{ discoveries: GeoAgentGeoSourceDiscovery[] }>;
+      confirmSourceDiscovery: (discoveryId: string) => Promise<GeoAgentGeoSourceDiscovery>;
       runGeoArticleDraft: (
         geoProjectId: string,
         platform: 'doubao' | 'deepseek',
@@ -573,6 +621,49 @@ declare global {
         skill_id?: string | null;
         assets?: GeoAgentKnowledgeDraftAssetInput[];
       }) => Promise<GeoAgentKnowledgeDraft>;
+      createKnowledgeDraftStream?: (
+        draft: {
+          message?: string | null;
+          conversation_id?: string | null;
+          intent?: string;
+          project_id?: string | null;
+          skill_id?: string | null;
+          assets?: GeoAgentKnowledgeDraftAssetInput[];
+        },
+        onEvent: (event: {
+          type:
+            | 'meta'
+            | 'status'
+            | 'model_start'
+            | 'model_status'
+            | 'reasoning_delta'
+            | 'delta'
+            | 'draft_section'
+            | 'result'
+            | 'done'
+            | 'error';
+          task_type?: string;
+          provider?: string;
+          model?: string;
+          api_family?: string;
+          request_id?: string;
+          http_status?: number;
+          latency_ms?: number;
+          section?: 'facts' | 'field_reviews' | 'source_quotes' | string;
+          text?: string;
+          items?: unknown[];
+          message?: string;
+          error?: string;
+          draft?: GeoAgentKnowledgeDraft;
+          can_proceed?: boolean;
+          step_index?: number;
+        }) => void
+      ) => Promise<{
+        type: 'done' | 'error';
+        draft?: GeoAgentKnowledgeDraft;
+        error?: string;
+        can_proceed?: boolean;
+      }>;
       confirmKnowledgeDraft: (
         draftId: string,
         profile?: GeoAgentEnterpriseProfileInput | null

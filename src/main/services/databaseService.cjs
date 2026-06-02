@@ -169,6 +169,32 @@ function createSchema(database) {
     CREATE INDEX IF NOT EXISTS idx_geo_question_sets_project_platform
       ON geo_question_sets(project_id, platform, created_at);
 
+    CREATE TABLE IF NOT EXISTS geo_source_discoveries (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      question_set_id TEXT REFERENCES geo_question_sets(id) ON DELETE SET NULL,
+      platform TEXT NOT NULL,
+      status TEXT NOT NULL,
+      source_name TEXT,
+      source_url TEXT,
+      source_type TEXT,
+      content_format TEXT,
+      priority_score REAL NOT NULL DEFAULT 0,
+      reason TEXT,
+      observed_in_answers TEXT,
+      recommended_topics TEXT,
+      discovery_json TEXT NOT NULL,
+      confirmed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_geo_source_discoveries_project_platform
+      ON geo_source_discoveries(project_id, platform, created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_geo_source_discoveries_question_set
+      ON geo_source_discoveries(question_set_id, created_at);
+
     CREATE TABLE IF NOT EXISTS geo_article_drafts (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -224,4 +250,3 @@ module.exports = {
   getDbPath,
   initializeDatabase,
 };
-
