@@ -42,11 +42,15 @@ function clearConversationStorage() {
 }
 
 function conversationDisplayTitle(conversation?: GeoAgentConversationSummary | null) {
-  return conversation?.summary || conversation?.title || '新对话';
+  return conversation?.display_title || conversation?.summary || conversation?.title || '新对话';
 }
 
 function conversationPreview(conversation: GeoAgentConversationSummary) {
-  return conversation.last_message_preview || conversation.last_message || null;
+  const preview = conversation.display_preview || conversation.last_message_preview || conversation.last_message || null;
+  if (!preview) {
+    return null;
+  }
+  return preview === conversationDisplayTitle(conversation) ? null : preview;
 }
 
 interface HeaderProps {
@@ -67,9 +71,11 @@ export function Header({ currentView, isSidebarCollapsed, onToggleSidebar }: Hea
     if (!currentConversationId) {
       return '新对话';
     }
-    return conversationDisplayTitle(conversations.find((conversation) => conversation.id === currentConversationId)) ?? '当前会话';
-  }, [currentConversationId, conversations]);
-const groupedConversations = useMemo(() => {
+    const activeConversation = [...publicConversations, ...conversations].find((conversation) => conversation.id === currentConversationId);
+    return conversationDisplayTitle(activeConversation) ?? '当前会话';
+  }, [currentConversationId, conversations, publicConversations]);
+
+  const groupedConversations = useMemo(() => {
     return groupConversations([...publicConversations, ...conversations]);
   }, [publicConversations, conversations]);
   const currentConversationStorageKey = conversationStorageKey(currentEnterprise?.id);
@@ -93,7 +99,7 @@ const groupedConversations = useMemo(() => {
       setConversations([]);
       return;
     }
-if (window.geoAgent?.getConversations) {
+    if (window.geoAgent?.getConversations) {
       window.geoAgent.getConversations(currentEnterprise.id, 40)
         .then((response) => setConversations(response.conversations ?? []))
         .catch(() => setConversations([]));
@@ -205,9 +211,20 @@ if (window.geoAgent?.getConversations) {
   return (
     <header className={cn(
       "fixed top-[40px] w-full h-8 z-40 flex items-center px-6 transition-[padding] duration-300",
-      isSidebarCollapsed ? "md:pl-[24px]" : "md:pl-[240px]"
+      isSidebarCollapsed ? "md:pl-4" : "md:pl-[240px]"
     )}>
-      <div className="relative flex min-w-0 items-center gap-2 ml-8 md:ml-10" ref={historyRef}>
+      {isSidebarCollapsed && (
+        <button
+          aria-label="展开侧边栏"
+          className="mr-2 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-on-surface-variant transition-colors hover:bg-surface-container-low hover:text-primary"
+          onClick={onToggleSidebar}
+          title="展开侧边栏"
+          type="button"
+        >
+          <Menu className="h-4 w-4" />
+        </button>
+      )}
+      <div className="relative flex min-w-0 items-center gap-2 ml-2 md:ml-3" ref={historyRef}>
             <span className="hidden text-[12px] font-bold text-primary sm:inline">
               鲸杉GEO-Agent
             </span>
@@ -246,26 +263,37 @@ if (window.geoAgent?.getConversations) {
                           {group.items.map((conversation) => (
                             <div
                               className={cn(
-                                'group/history-row flex w-full items-center justify-between gap-2 rounded-lg transition-colors',
+                                'group/history-row relative flex w-full items-center justify-between gap-2 rounded-lg transition-colors',
                                 currentConversationId === conversation.id
-                                  ? 'bg-surface-container'
-                                  : 'hover:bg-surface-container-low'
+                                  ? 'bg-primary/8 text-primary ring-1 ring-primary/12 dark:bg-primary/15 dark:ring-primary/20'
+                                  : 'bg-transparent text-on-surface hover:bg-surface-container-low/60'
                               )}
                               key={conversation.id}
                             >
+                              {currentConversationId === conversation.id && (
+                                <span className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-primary" />
+                              )}
                               <button
-                                className="flex min-w-0 flex-1 items-center justify-between gap-3 px-2.5 py-2 text-left text-[13px] font-semibold text-primary"
+                                className="flex min-w-0 flex-1 items-center gap-3 py-2 pl-3 pr-2 text-left"
                                 onClick={() => openConversation(conversation.id)}
                                 type="button"
                               >
-                                <span className="min-w-0 flex-1 flex items-center gap-1.5">
-                                  <span className="block truncate flex-1 min-w-0">{conversationDisplayTitle(conversation)}</span>
-                                </span>
-                                {conversationPreview(conversation) && (
-                                  <span className="mt-0.5 block truncate text-[11px] font-medium text-on-surface-variant/65">
-                                    {conversationPreview(conversation)}
+                                <span className="min-w-0 flex-1">
+                                  <span className={cn(
+                                    'block truncate text-[13px] font-semibold',
+                                    currentConversationId === conversation.id ? 'text-primary' : 'text-on-surface'
+                                  )}>
+                                    {conversationDisplayTitle(conversation)}
                                   </span>
-                                )}
+                                  {conversationPreview(conversation) && (
+                                    <span className={cn(
+                                      'mt-0.5 block truncate text-[11px] font-medium',
+                                      currentConversationId === conversation.id ? 'text-primary/70' : 'text-on-surface-variant/60'
+                                    )}>
+                                      {conversationPreview(conversation)}
+                                    </span>
+                                  )}
+                                </span>
                                 {currentConversationId === conversation.id && <Check className="h-4 w-4 shrink-0 text-primary" />}
                               </button>
                               <button
@@ -349,13 +377,12 @@ const groupConversations = (items: GeoAgentConversationSummary[]) => {
 
   // 公共对话
   if (publicChatItems.length > 0) {
-    result.push({ label: '公共对话', isPublic: true, isGeo: false, items: [] });
     const grouped = groupByDate(publicChatItems);
-    grouped.forEach((g) => result.push({ label: g.label, isPublic: true, isGeo: false, items: g.items }));
+    grouped.forEach((g) => result.push({ label: `公共对话 · ${g.label}`, isPublic: true, isGeo: false, items: g.items }));
   }
   if (publicGeoItems.length > 0) {
     const grouped = groupByDate(publicGeoItems);
-    grouped.forEach((g) => result.push({ label: g.label, isPublic: true, isGeo: true, items: g.items }));
+    grouped.forEach((g) => result.push({ label: `公共流程 · ${g.label}`, isPublic: true, isGeo: true, items: g.items }));
   }
 
   // 知识库对话

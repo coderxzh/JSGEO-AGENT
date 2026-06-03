@@ -36,21 +36,106 @@ function titleFromMessage(message) {
   return text || '新对话';
 }
 
+function isTransientConversationText(value) {
+  const text = normalizeText(value);
+  if (!text) return true;
+  return [
+    '已上传',
+    '正在解析',
+    '正在处理',
+    '正在写入',
+    '新的 Electron-only',
+    '新的 Electron-only 智能助手',
+    'Knowledge draft created',
+  ].some((prefix) => text.startsWith(prefix));
+}
+
+function getCompanyNameFromMetadata(metadata) {
+  return metadata?.profile?.company_name
+    || metadata?.draft?.profile?.company_name
+    || metadata?.project?.company_name
+    || metadata?.question_set?.company_name
+    || null;
+}
+
+function countQuestionSet(metadata) {
+  const questions = metadata?.question_set?.questions;
+  const pool = Array.isArray(questions?.question_pool) ? questions.question_pool.length : 0;
+  const ranking = Array.isArray(questions?.ranking_questions) ? questions.ranking_questions.length : 0;
+  return { pool, ranking };
+}
+
+function deriveConversationDisplayFields(row, messages = []) {
+  const result = {
+    display_title: null,
+    display_preview: null,
+  };
+  const ordered = [...messages].filter(Boolean);
+  const reversed = [...ordered].reverse();
+  const companyName = reversed.map((message) => getCompanyNameFromMetadata(message.metadata)).find(Boolean);
+
+  for (const message of reversed) {
+    const metadata = message.metadata || {};
+    if (metadata.type === 'geo_phase_result' && Number(metadata.phase) === 2 && metadata.question_set) {
+      const counts = countQuestionSet(metadata);
+      result.display_title = `${companyName || '企业'}｜排行榜问题池`;
+      result.display_preview = counts.pool
+        ? `已生成 ${counts.pool} 个问题${counts.ranking ? `，${counts.ranking} 个高优先级` : ''}`
+        : '已生成排行榜问题池';
+      return result;
+    }
+    if (metadata.type === 'geo_phase_result' && Number(metadata.phase) === 3) {
+      result.display_title = `${companyName || '企业'}｜高权重信源`;
+      result.display_preview = '已生成信源发现结果';
+      return result;
+    }
+    if (metadata.type === 'geo_phase_result' && Number(metadata.phase) === 4) {
+      result.display_title = `${companyName || '企业'}｜支撑内容草稿`;
+      result.display_preview = '已生成咨询/测评支撑内容';
+      return result;
+    }
+    if (metadata.type === 'knowledge_confirmed') {
+      const total = Number(metadata.total || 0);
+      result.display_title = `${getCompanyNameFromMetadata(metadata) || companyName || '企业'}｜企业知识库`;
+      result.display_preview = total ? `已确认知识库，${total} 条知识条目` : '已确认知识库';
+      return result;
+    }
+    if (metadata.type === 'knowledge_draft') {
+      result.display_title = `${getCompanyNameFromMetadata(metadata) || companyName || '企业'}｜知识库草稿`;
+      result.display_preview = metadata.status === 'confirmed' ? '草稿已确认' : '待确认知识库草稿';
+      return result;
+    }
+  }
+
+  const userMessage = ordered.find((message) => message.role === 'user' && !isTransientConversationText(message.content));
+  const lastMeaningful = reversed.find((message) => !isTransientConversationText(message.content));
+  result.display_title = previewText(row.summary, 64)
+    || previewText(row.title, 64)
+    || previewText(userMessage?.content, 64)
+    || '新对话';
+  result.display_preview = previewText(lastMeaningful?.content, 96) || null;
+  return result;
+}
+
 function rowToConversation(row) {
   const messageCount = Number(row.message_count || 0);
+  const displayTitle = row.display_title || null;
+  const displayPreview = row.display_preview || null;
   return {
     id: row.id,
     project_id: row.project_id,
     kind: row.kind,
     title: row.title,
-    summary: row.summary || null,
+    summary: displayTitle || row.summary || null,
+    display_title: displayTitle,
+    display_preview: displayPreview,
     summary_model: row.summary_model || null,
     summary_updated_at: row.summary_updated_at || null,
     summary_message_count: Number(row.summary_message_count || 0),
     summary_dirty: Boolean(row.summary_dirty),
     message_count: messageCount,
-    last_message_preview: row.last_message_preview || null,
-    last_message: row.last_message_preview || null,
+    last_message_preview: displayPreview || row.last_message_preview || null,
+    last_message: displayPreview || row.last_message_preview || null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -60,6 +145,7 @@ function rowToMessage(row) {
   return {
     id: row.id,
     conversation_id: row.conversation_id,
+    project_id: row.project_id,
     role: row.role,
     content: row.content,
     metadata: parseJson(row.metadata_json, {}),
@@ -91,16 +177,8 @@ function getConversationRow(conversationId) {
 }
 
 function ensureConversation({ projectId = null, conversationId = null, title = null, firstMessage = '', kind = 'chat' }) {
-  // geo_workflow 类型必须绑定有效的 project_id
-  if (kind === 'geo_workflow') {
-    if (!projectId || !projectExists(projectId)) {
-      throw new Error('GEO 优化会话必须绑定有效企业知识库。');
-    }
-  } else {
-    // chat 类型允许 project_id 为 null（公共对话）
-    if (projectId && !projectExists(projectId)) {
-      throw new Error('当前对话必须绑定有效企业。请先创建或选择企业知识库。');
-    }
+  if (projectId && !projectExists(projectId)) {
+    throw new Error('Current conversation must be bound to an existing enterprise knowledge base.');
   }
 
   const db = getDb();
@@ -142,7 +220,52 @@ function markConversationSummaryDirty(conversationId) {
   getDb().prepare('UPDATE conversations SET summary_dirty = 1 WHERE id = ?').run(conversationId);
 }
 
+function bindConversationToProject(conversationId, projectId) {
+  if (!conversationId || !projectId) {
+    throw new Error('conversationId and projectId are required.');
+  }
+  if (!projectExists(projectId)) {
+    throw new Error('Target enterprise knowledge base does not exist.');
+  }
+  const db = getDb();
+  const conversation = getConversationRow(conversationId);
+  if (!conversation) {
+    throw new Error('Conversation does not exist.');
+  }
+  if (conversation.project_id && conversation.project_id !== projectId) {
+    throw new Error('This conversation is already bound to another enterprise knowledge base.');
+  }
+  if (conversation.project_id === projectId) {
+    return rowToConversation(conversation);
+  }
+  const timestamp = nowIso();
+  const tx = db.transaction(() => {
+    db.prepare(`
+      UPDATE conversations
+      SET project_id = @project_id,
+          updated_at = @updated_at,
+          summary_dirty = 1
+      WHERE id = @id
+    `).run({
+      id: conversationId,
+      project_id: projectId,
+      updated_at: timestamp,
+    });
+    db.prepare(`
+      UPDATE messages
+      SET project_id = @project_id
+      WHERE conversation_id = @conversation_id
+    `).run({
+      conversation_id: conversationId,
+      project_id: projectId,
+    });
+  });
+  tx();
+  return rowToConversation(getConversationRow(conversationId));
+}
+
 function updateConversationStats({ conversationId, preview, timestamp }) {
+  const nextPreview = isTransientConversationText(preview) ? null : previewText(preview);
   getDb().prepare(`
     UPDATE conversations
     SET updated_at = @updated_at,
@@ -157,7 +280,7 @@ function updateConversationStats({ conversationId, preview, timestamp }) {
   `).run({
     conversation_id: conversationId,
     updated_at: timestamp,
-    last_message_preview: previewText(preview),
+    last_message_preview: nextPreview,
   });
 }
 
@@ -220,13 +343,13 @@ function updateConversationMessage({ messageId, conversationId, projectId, conte
     existing = db.prepare(`
       SELECT *
       FROM messages
-      WHERE id = ? AND conversation_id = ? AND project_id = ?
+      WHERE id = ? AND conversation_id = ? AND (project_id = ? OR project_id IS NULL)
     `).get(messageId, conversationId, projectId);
   } else {
     existing = db.prepare(`
       SELECT *
       FROM messages
-      WHERE id = ? AND conversation_id = ? AND project_id IS NULL
+      WHERE id = ? AND conversation_id = ?
     `).get(messageId, conversationId);
   }
   if (!existing) throw new Error('消息不存在。');
@@ -311,6 +434,12 @@ function shouldSummarize(row, reason) {
 
 function formatMessagesForSummary(messages) {
   return messages
+    .filter((message) => {
+      const type = message.metadata?.type;
+      if (type === 'knowledge_draft_request') return false;
+      if (message.metadata?.status === 'streaming') return false;
+      return !isTransientConversationText(message.content);
+    })
     .slice(-18)
     .map((message) => {
       const role = message.role === 'user' ? '用户' : message.role === 'assistant' ? '助手' : '系统';
@@ -399,6 +528,24 @@ async function refreshStaleSummaries(rows, reason) {
   }
 }
 
+function hydrateConversationRows(rows) {
+  if (!rows.length) return [];
+  const db = getDb();
+  const messageQuery = db.prepare(`
+    SELECT *
+    FROM messages
+    WHERE conversation_id = ?
+    ORDER BY datetime(created_at) ASC
+  `);
+  return rows.map((row) => {
+    const messages = messageQuery.all(row.id).map(rowToMessage);
+    return {
+      ...row,
+      ...deriveConversationDisplayFields(row, messages),
+    };
+  });
+}
+
 async function listConversations(projectId = null, limit = 40, options = {}) {
   const db = getDb();
   let rows;
@@ -421,13 +568,13 @@ async function listConversations(projectId = null, limit = 40, options = {}) {
     rows = db.prepare(`
       SELECT *
       FROM conversations
-      WHERE project_id IS NULL AND kind = 'chat'
+      WHERE project_id IS NULL
       ORDER BY datetime(updated_at) DESC
       LIMIT ?
     `).all(Number(limit || 40));
   }
 
-  const visibleRows = rows.filter((row) => !isPlaceholderOnlyConversation(row.id));
+  const visibleRows = hydrateConversationRows(rows.filter((row) => !isPlaceholderOnlyConversation(row.id)));
 
   if (options.refreshSummaries !== false) {
     refreshStaleSummaries(visibleRows, options.reason || 'history_open').catch((error) => {
@@ -494,10 +641,14 @@ function findLatestConversation(projectId, kind = null) {
     row = db.prepare(
       `SELECT * FROM conversations WHERE project_id = ? ORDER BY datetime(updated_at) DESC LIMIT 1`
     ).get(projectId);
+  } else if (kind) {
+    row = db.prepare(
+      `SELECT * FROM conversations WHERE project_id IS NULL AND kind = ? ORDER BY datetime(updated_at) DESC LIMIT 1`
+    ).get(kind);
   } else {
     // projectId 为 null 时查找公共对话
     row = db.prepare(
-      `SELECT * FROM conversations WHERE project_id IS NULL AND kind = 'chat' ORDER BY datetime(updated_at) DESC LIMIT 1`
+      `SELECT * FROM conversations WHERE project_id IS NULL ORDER BY datetime(updated_at) DESC LIMIT 1`
     ).get();
   }
   return row ? rowToConversation(row) : null;
@@ -510,6 +661,7 @@ async function listPublicConversations(limit = 40) {
 module.exports = {
   addMessage,
   appendConversationMessage,
+  bindConversationToProject,
   clearConversationHistory,
   deleteConversation,
   ensureConversation,

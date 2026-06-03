@@ -382,12 +382,13 @@ function registerHandlers() {
     const channel = `geo-agent:create-knowledge-draft-stream:${requestId}`;
     const projectId = payload.project_id || payload.projectId || null;
     let conversation = null;
+    let draftMessage = null;
     try {
-      if (projectId) {
+      if (true) {
         // 尝试复用最近的 geo_workflow 会话，如果都没有则创建新的
         let effectiveConversationId = payload.conversation_id || null;
         if (!effectiveConversationId) {
-          const latest = conversationService.findLatestConversation(projectId, 'geo_workflow');
+          const latest = conversationService.findLatestConversation(null, 'geo_workflow');
           if (latest) {
             effectiveConversationId = latest.id;
           }
@@ -424,8 +425,8 @@ function registerHandlers() {
         event.sender.send(channel, { type: 'error', error, draft, can_proceed: false });
         return { type: 'error', error, draft, can_proceed: false };
       }
-      if (conversation && projectId) {
-        conversationService.addMessage({
+      if (conversation) {
+        draftMessage = conversationService.addMessage({
           conversationId: conversation.id,
           projectId,
           role: 'assistant',
@@ -439,8 +440,8 @@ function registerHandlers() {
         });
         draft.conversation_id = conversation.id;
       }
-      event.sender.send(channel, { type: 'done', draft, conversation_id: conversation?.id, can_proceed: true });
-      return { type: 'done', draft, conversation_id: conversation?.id, can_proceed: true };
+      event.sender.send(channel, { type: 'done', draft, conversation_id: conversation?.id, message: draftMessage, can_proceed: true });
+      return { type: 'done', draft, conversation_id: conversation?.id, message: draftMessage, can_proceed: true };
     } catch (error) {
       const message = error.message || String(error);
       event.sender.send(channel, { type: 'error', error: message, can_proceed: false });
@@ -456,18 +457,23 @@ function registerHandlers() {
         // 如果没有，则创建新的 geo_workflow 会话
         let effectiveConversationId = payload.conversationId || null;
         if (!effectiveConversationId) {
-          const latest = conversationService.findLatestConversation(projectId, 'geo_workflow');
+          const latest = conversationService.findLatestConversation(null, 'geo_workflow');
           if (latest) {
             effectiveConversationId = latest.id;
           }
         }
-        const conversation = conversationService.ensureConversation({
+        let conversation = effectiveConversationId
+          ? conversationService.bindConversationToProject(effectiveConversationId, projectId)
+          : null;
+        if (!conversation) {
+          conversation = conversationService.ensureConversation({
           projectId,
           conversationId: effectiveConversationId,
           title: `${response.profile.company_name || '企业'} GEO 优化`,
           firstMessage: '开始 GEO 优化流程',
           kind: 'geo_workflow',
-        });
+          });
+        }
         payload.conversationId = conversation.id;
         const confirmedDraftMessage = conversationService.markKnowledgeDraftConfirmed({
           conversationId: conversation.id,
@@ -713,7 +719,7 @@ function registerHandlers() {
           role: 'assistant',
           content: `正在发现 ${payload.platform || 'GEO'} 高权重信源。`,
           metadata: {
-            type: 'geo_phase_result',
+            type: 'geo_phase_prompt',
             status: 'streaming',
             phase: 3,
             platform: payload.platform,
@@ -738,7 +744,7 @@ function registerHandlers() {
           projectId,
           content: `已完成 ${payload.platform || 'GEO'} 高权重信源发现。`,
           metadata: {
-            type: 'geo_phase_result',
+            type: 'geo_phase_prompt',
             status: discovery.status || 'completed',
             phase: 3,
             platform: discovery.platform || payload.platform,
@@ -851,7 +857,7 @@ function registerHandlers() {
           projectId,
           content: `已确认${platform === 'doubao' ? '豆包' : 'DeepSeek'}阶段二问题池，共 ${questionSet.questions.question_pool?.length || 0} 个问题。`,
           metadata: {
-            type: 'geo_phase_result',
+            type: 'geo_phase_prompt',
             platform,
             phase: 2,
             question_set: questionSet,
@@ -881,7 +887,7 @@ function registerHandlers() {
           projectId,
           content: `已暂缓进入${platform === 'doubao' ? '豆包' : 'DeepSeek'}阶段二。`,
           metadata: {
-            type: 'geo_phase_result',
+            type: 'geo_phase_prompt',
             platform,
             phase: 2,
             status: 'user_deferred',
@@ -942,7 +948,7 @@ function registerHandlers() {
       });
 
       // 更新 conversation 消息
-      conversationService.addMessage({
+      const resultMessage = conversationService.addMessage({
         conversationId: conversation.id,
         projectId,
         role: 'assistant',
@@ -962,9 +968,10 @@ function registerHandlers() {
         type: 'done',
         content: questionSet.questions.summary,
         status: 'completed',
+        message: resultMessage,
       });
 
-      return { type: 'done', question_set: questionSet };
+      return { type: 'done', question_set: questionSet, message: resultMessage };
     } catch (error) {
       console.error('[geo-phase-two] 流式调用失败:', error.message);
       event.sender.send(channel, { type: 'error', error: error.message });

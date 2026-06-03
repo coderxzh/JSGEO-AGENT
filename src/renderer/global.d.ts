@@ -184,6 +184,7 @@ declare global {
   type GeoAgentKnowledgeDraftConfirmResponse = {
     ok: boolean;
     project_id: string;
+    conversation_id?: string | null;
     profile: GeoAgentEnterpriseProfile;
     entries: GeoAgentKnowledgeEntry[];
     total: number;
@@ -205,6 +206,8 @@ declare global {
     kind?: string;
     title: string;
     summary?: string | null;
+    display_title?: string | null;
+    display_preview?: string | null;
     summary_model?: string | null;
     summary_updated_at?: string | null;
     summary_message_count?: number;
@@ -511,9 +514,10 @@ declare global {
           report?: GeoAgentGeoReport;
           question_set?: GeoAgentGeoQuestionSet;
           status?: string;
+          message?: GeoAgentConversationMessage;
           error?: string;
         }) => void
-      ) => Promise<{ type: 'done'; status?: string }>;
+      ) => Promise<{ type: 'done'; status?: string; message?: GeoAgentConversationMessage }>;
       getLatestGeoReport: (geoProjectId: string, platform: 'doubao' | 'deepseek') => Promise<GeoAgentGeoReport>;
       getGeoReport: (reportId: string) => Promise<GeoAgentGeoReport>;
       getLatestGeoQuestionSet: (geoProjectId: string, platform: 'doubao' | 'deepseek') => Promise<GeoAgentGeoQuestionSet>;
@@ -677,6 +681,7 @@ declare global {
           message?: string;
           error?: string;
           draft?: GeoAgentKnowledgeDraft;
+          message?: GeoAgentConversationMessage;
           can_proceed?: boolean;
           step_index?: number;
         }) => void
@@ -684,6 +689,8 @@ declare global {
         type: 'done' | 'error';
         draft?: GeoAgentKnowledgeDraft;
         error?: string;
+        conversation_id?: string | null;
+        message?: GeoAgentConversationMessage;
         can_proceed?: boolean;
       }>;
       confirmKnowledgeDraft: (
