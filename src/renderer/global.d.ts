@@ -178,6 +178,7 @@ declare global {
   type GeoAgentKnowledgeDraft = {
     id: string;
     intent: string;
+    merge_mode?: 'supplement' | 'replace' | string;
     project_id?: string | null;
     conversation_id?: string | null;
     assistant_message_id?: string | null;
@@ -854,6 +855,8 @@ declare global {
         message?: string | null;
         conversation_id?: string | null;
         intent?: string;
+        mergeMode?: 'supplement' | 'replace';
+        merge_mode?: 'supplement' | 'replace';
         project_id?: string | null;
         skill_id?: string | null;
         assets?: GeoAgentKnowledgeDraftAssetInput[];
@@ -863,6 +866,8 @@ declare global {
           message?: string | null;
           conversation_id?: string | null;
           intent?: string;
+          mergeMode?: 'supplement' | 'replace';
+          merge_mode?: 'supplement' | 'replace';
           project_id?: string | null;
           skill_id?: string | null;
           assets?: GeoAgentKnowledgeDraftAssetInput[];
@@ -911,7 +916,8 @@ declare global {
         draftId: string,
         profile?: GeoAgentEnterpriseProfileInput | null,
         conversationId?: string | null,
-        draft?: GeoAgentKnowledgeDraft | null
+        draft?: GeoAgentKnowledgeDraft | null,
+        mergeMode?: 'supplement' | 'replace'
       ) => Promise<GeoAgentKnowledgeDraftConfirmResponse>;
       rejectKnowledgeDraft: (draftId: string) => Promise<{ ok: boolean }>;
       reindexKnowledge: (projectId: string) => Promise<GeoAgentKnowledgeIndexStatus>;
