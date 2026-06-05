@@ -644,7 +644,6 @@ declare global {
         messageId?: string | null,
         confirmedQuestionIds?: string[]
       ) => Promise<{ project: GeoAgentGeoProject; question_set: GeoAgentGeoQuestionSet }>;
-      cancelGeoPhaseTwo: (geoProjectId: string, platform: 'doubao' | 'deepseek', messageId?: string | null) => Promise<GeoAgentGeoProject>;
       runGeoPhaseTwoReport: (geoProjectId: string, platform: 'doubao' | 'deepseek', messageId?: string | null) => Promise<GeoAgentGeoReport>;
       runGeoPhaseTwoReportStream?: (
         geoProjectId: string,

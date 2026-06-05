@@ -49,7 +49,7 @@ type KnowledgeGapItem = {
 
 type GeoStageStatus = {
   label: string;
-  status: '可用' | '进行中' | '待启动' | '待开发' | '已暂缓';
+  status: '可用' | '进行中' | '待启动' | '待开发' | '待重试' | '已暂缓';
   description: string;
 };
 
@@ -1435,7 +1435,7 @@ function GapItemCard({
 function GeoStageRow({ index, stage }: { index: number; stage: GeoStageStatus }) {
   const isUsable = stage.status === '可用';
   const isProgress = stage.status === '进行中';
-  const isDeferred = stage.status === '已暂缓';
+  const isDeferred = stage.status === '已暂缓' || stage.status === '待重试';
   return (
     <div className="flex items-start gap-3 rounded-xl bg-white/60 px-3 py-3 dark:bg-[#1f1f1f]">
       <div className={`mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-full text-[12px] font-black ${isUsable ? 'bg-secondary text-on-secondary' : isProgress ? 'bg-secondary/15 text-secondary' : isDeferred ? 'bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'bg-surface-container text-on-surface-variant'}`}>
@@ -1939,7 +1939,7 @@ function platformStatusSummary(items: Array<[string, Pick<GeoStageStatus, 'statu
 function combineGeoStageStatuses(statuses: GeoStageStatus['status'][]): GeoStageStatus['status'] {
   if (statuses.includes('进行中')) return '进行中';
   if (statuses.includes('可用')) return '可用';
-  if (statuses.includes('已暂缓')) return '已暂缓';
+  if (statuses.includes('待重试') || statuses.includes('已暂缓')) return '待重试';
   if (statuses.includes('待启动')) return '待启动';
   return '待开发';
 }
@@ -1948,8 +1948,8 @@ function mapWorkflowStatus(status: string): GeoStageStatus['status'] {
   if (status === 'completed') return '可用';
   if (status === 'in_progress' || status === 'pending') return '进行中';
   if (status === 'ready' || status === 'not_started') return '待启动';
-  if (status === 'user_deferred') return '已暂缓';
-  if (status === 'failed') return '已暂缓';
+  if (status === 'user_deferred') return '待重试';
+  if (status === 'failed') return '待重试';
   return '待启动';
 }
 
@@ -1985,7 +1985,7 @@ function getPlatformStageThreeStatus(
     return { status: '可用', description: `${platformLabel} 高权重信源发现已完成，可进入咨询类和测评类支撑内容生成。` };
   }
   if (discovery?.discovery.status === 'failed') {
-    return { status: '已暂缓', description: `${platformLabel} 高权重信源发现失败，可从智能助手重试。` };
+    return { status: '待重试', description: `${platformLabel} 高权重信源发现失败，可从智能助手重新搜索信源。` };
   }
   const stageThree = (geoProject?.phase_status?.platforms?.[platform]?.stage_3 ?? {}) as { status?: string };
   if (stageThree.status === 'completed') {
@@ -2008,14 +2008,14 @@ function getPlatformStageTwoStatus(
     return { status: '可用', description: `${platformLabel} 排行榜问题池已生成，可进入阶段三高权重信源发现。` };
   }
   if (report?.status === 'failed') {
-    return { status: '已暂缓', description: `${platformLabel} 排行榜问题池生成失败：${report.error_message || '请稍后重试'}` };
+    return { status: '待重试', description: `${platformLabel} 排行榜问题池生成失败：${report.error_message || '请重新生成问题池'}` };
   }
   const stageTwo = geoProject?.phase_status?.platforms?.[platform]?.stage_2 ?? {};
   if (stageTwo.status === 'pending') {
     return { status: '进行中', description: `已进入${platformLabel}阶段二准备，下一步生成${platformLabel}排行榜问题池。` };
   }
   if (stageTwo.status === 'user_deferred') {
-    return { status: '已暂缓', description: `用户已暂缓${platformLabel}阶段二，可稍后从智能助手或知识库详情页重新启动。` };
+    return { status: '待重试', description: `${platformLabel}阶段二可从智能助手重新生成问题池。` };
   }
   return { status: '待启动', description: `可从智能助手选择${platformLabel}模型启动排行榜问题池构建。` };
 }

@@ -1469,25 +1469,6 @@ export function AgentStudio() {
     }
   };
 
-  const cancelPhaseTwo = async (messageId: string, project: GeoAgentGeoProject, platform: 'doubao' | 'deepseek' = AUTO_PLATFORM) => {
-    let updated = project;
-    if (window.geoAgent?.cancelGeoPhaseTwo) {
-      updated = await window.geoAgent.cancelGeoPhaseTwo(project.id, platform, messageId).catch(() => project);
-      setGeoProject(updated);
-    }
-    rememberPhaseTwoPromptKey(phaseTwoPromptKey(project.project_id, conversationId, platform));
-    const platformLabel = platformLabelFor(platform);
-    setMessages((current) => updateMessage(current, messageId, {
-      content: `已暂缓进入${platformLabel}阶段二。${updated.company_name} 的企业知识库仍保持阶段一可用状态，稍后可以从智能助手推荐项或知识库详情页重新启动 ${platformLabel} 排行榜问题池构建。`,
-      phaseTwoPrompt: undefined,
-      phaseTwoPlatform: undefined,
-      confirmationState: 'output-available',
-      confirmationApproved: false,
-      status: 'complete',
-    }));
-    window.dispatchEvent(new CustomEvent('geo-agent-geo-project-changed', { detail: { projectId: project.project_id, geoProjectId: project.id } }));
-  };
-
   const runSourceDiscoveryFromReport = async (messageId: string, report: GeoAgentGeoReport) => {
     const platform = report.platform === 'deepseek' ? 'deepseek' : 'doubao';
     const lockKey = stageRunKey(report.geo_project_id, platform, 3);
@@ -1752,17 +1733,6 @@ export function AgentStudio() {
     }
   };
 
-  const cancelSupportArticles = (messageId: string) => {
-    setMessages((current) => updateMessage(current, messageId, {
-      content: '已暂缓生成阶段四内容资产。当前信源发现结果已保留，稍后可重新启动内容生成。',
-      supportArticlesPrompt: undefined,
-      confirmationState: 'output-available',
-      confirmationApproved: false,
-      actionBusy: false,
-      status: 'complete',
-    }));
-  };
-
   const runArticleDraftFromDiscovery = async (
     messageId: string,
     discovery: GeoAgentGeoSourceDiscovery,
@@ -1893,15 +1863,11 @@ export function AgentStudio() {
     }
   };
 
-  const rejectKnowledgeDraft = async (messageId: string, draft: GeoAgentKnowledgeDraft) => {
-    if (window.geoAgent?.rejectKnowledgeDraft) {
-      await window.geoAgent.rejectKnowledgeDraft(draft.id).catch(() => undefined);
-    }
+  const continueKnowledgeDraftInput = (messageId: string) => {
     setMessages((current) => updateMessage(current, messageId, {
-      content: '已取消本次知识库草稿，未写入企业知识库。你可以继续上传资料或补充说明后重新生成。',
-      knowledgeDraft: undefined,
-      confirmationState: 'output-available',
-      confirmationApproved: false,
+      content: '可以继续上传资料或补充说明，我会基于新增内容重新生成知识库草稿。当前草稿先保留，避免流程中断。',
+      confirmationState: 'approval-requested',
+      confirmationApproved: undefined,
       actionBusy: false,
       status: 'complete',
     }));
@@ -2083,11 +2049,9 @@ export function AgentStudio() {
             <ChatBubble
               key={message.id}
               message={message}
-              onCancelPhaseTwo={cancelPhaseTwo}
               onConfirmDraft={confirmKnowledgeDraft}
               onConfirmPhaseTwo={confirmPhaseTwo}
-              onRejectDraft={rejectKnowledgeDraft}
-              onCancelSupportArticles={cancelSupportArticles}
+              onContinueKnowledgeDraft={continueKnowledgeDraftInput}
               onConfirmSupportArticles={runSupportArticlesFromDiscovery}
               onRequestSupportArticles={requestSupportArticles}
               onRunArticleDraft={runArticleDraftFromDiscovery}
@@ -2309,18 +2273,16 @@ const AttachmentAwareSubmit: React.FC<{
 
 const ChatBubble: React.FC<{
   message: ChatMessage;
-  onCancelPhaseTwo: (messageId: string, project: GeoAgentGeoProject, platform?: 'doubao' | 'deepseek') => void;
-  onCancelSupportArticles: (messageId: string) => void;
+  onContinueKnowledgeDraft: (messageId: string) => void;
   onConfirmDraft: (messageId: string, draft: GeoAgentKnowledgeDraft) => void;
   onConfirmPhaseTwo: (messageId: string, project: GeoAgentGeoProject, platform?: 'doubao' | 'deepseek') => void;
   onConfirmSupportArticles: (messageId: string, discovery: GeoAgentGeoSourceDiscovery) => void;
-  onRejectDraft: (messageId: string, draft: GeoAgentKnowledgeDraft) => void;
   onRequestSupportArticles: (messageId: string, discovery: GeoAgentGeoSourceDiscovery) => void;
   onRunArticleDraft: (messageId: string, discovery: GeoAgentGeoSourceDiscovery, articleType: 'consulting' | 'review') => void;
   onRunSourceDiscovery: (messageId: string, report: GeoAgentGeoReport) => void;
   runningStageKeys: Set<string>;
   workflowState: GeoAgentWorkflowState | null;
-}> = ({ message, onCancelPhaseTwo, onCancelSupportArticles, onConfirmDraft, onConfirmPhaseTwo, onConfirmSupportArticles, onRejectDraft, onRequestSupportArticles, onRunArticleDraft, onRunSourceDiscovery, runningStageKeys, workflowState }) => {
+}> = ({ message, onContinueKnowledgeDraft, onConfirmDraft, onConfirmPhaseTwo, onConfirmSupportArticles, onRequestSupportArticles, onRunArticleDraft, onRunSourceDiscovery, runningStageKeys, workflowState }) => {
   const nextAction = getNextWorkflowAction(workflowState, message, runningStageKeys);
   if (message.role === 'user') {
     return (
@@ -2441,12 +2403,12 @@ const ChatBubble: React.FC<{
         <AssistantConfirmationBar
           approved={message.confirmationApproved}
           id={message.knowledgeDraft.id}
-          onCancel={() => onRejectDraft(message.id, message.knowledgeDraft!)}
+          onCancel={() => onContinueKnowledgeDraft(message.id)}
           onConfirm={() => onConfirmDraft(message.id, message.knowledgeDraft!)}
           state={message.confirmationState ?? 'approval-requested'}
           title="确认后将建立企业知识库，并生成本地知识条目与向量索引。"
           confirmLabel="确认建立知识库"
-          cancelLabel="取消"
+          cancelLabel="继续补充资料"
           busy={message.actionBusy}
         />
       )}
@@ -2454,12 +2416,12 @@ const ChatBubble: React.FC<{
         <AssistantConfirmationBar
           approved={message.confirmationApproved}
           id={message.phaseTwoPrompt.id}
-          onCancel={() => onCancelPhaseTwo(message.id, message.phaseTwoPrompt!, message.phaseTwoPlatform)}
+          onCancel={() => onConfirmPhaseTwo(message.id, message.phaseTwoPrompt!, message.phaseTwoPlatform)}
           onConfirm={() => onConfirmPhaseTwo(message.id, message.phaseTwoPrompt!, message.phaseTwoPlatform)}
           state={message.confirmationState ?? 'approval-requested'}
-          title={`是否进入阶段二，开始生成${platformLabelFor(message.phaseTwoPlatform ?? 'doubao')}排行榜问题池？`}
+          title={`进入阶段二，生成${platformLabelFor(message.phaseTwoPlatform ?? 'doubao')}排行榜问题池。`}
           confirmLabel={`生成${platformLabelFor(message.phaseTwoPlatform ?? 'doubao')}排行榜问题池`}
-          cancelLabel="暂不进入"
+          cancelLabel="重新生成问题池"
           busy={message.actionBusy}
         />
       )}
@@ -2467,12 +2429,12 @@ const ChatBubble: React.FC<{
         <AssistantConfirmationBar
           approved={message.confirmationApproved}
           id={message.supportArticlesPrompt.id}
-          onCancel={() => onCancelSupportArticles(message.id)}
+          onCancel={() => onConfirmSupportArticles(message.id, message.supportArticlesPrompt!)}
           onConfirm={() => onConfirmSupportArticles(message.id, message.supportArticlesPrompt!)}
           state={message.confirmationState ?? 'approval-requested'}
-          title={`是否生成${platformLabelFor(message.supportArticlesPrompt.platform === 'deepseek' ? 'deepseek' : 'doubao')}阶段四内容资产？确认后会生成首轮支撑文章和排行榜文章草稿。`}
-          confirmLabel="确认生成支撑内容"
-          cancelLabel="暂不生成"
+          title={`生成${platformLabelFor(message.supportArticlesPrompt.platform === 'deepseek' ? 'deepseek' : 'doubao')}阶段四内容资产，会生成首轮支撑文章和排行榜文章草稿。`}
+          confirmLabel="生成内容资产"
+          cancelLabel="重新生成内容资产"
           busy={message.actionBusy}
         />
       )}

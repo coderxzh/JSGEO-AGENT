@@ -97,7 +97,6 @@ contextBridge.exposeInMainWorld('geoAgent', {
   getGeoWorkflowState: (geoProjectId) => ipcRenderer.invoke('geo-agent:get-geo-workflow-state', geoProjectId),
   createGeoPhaseTwoPrompt: (geoProjectId, platform, conversationId) => ipcRenderer.invoke('geo-agent:create-geo-phase-two-prompt', geoProjectId, platform, conversationId),
   confirmGeoPhaseTwo: (geoProjectId, platform, messageId, confirmedQuestionIds = []) => ipcRenderer.invoke('geo-agent:confirm-geo-phase-two', geoProjectId, platform, messageId, confirmedQuestionIds),
-  cancelGeoPhaseTwo: (geoProjectId, platform, messageId) => ipcRenderer.invoke('geo-agent:cancel-geo-phase-two', geoProjectId, platform, messageId),
   runGeoPhaseTwoReport: (geoProjectId, platform, messageId) => ipcRenderer.invoke('geo-agent:run-geo-phase-two-report', geoProjectId, platform, messageId),
   runGeoPhaseTwoReportStream: (geoProjectId, platform, messageId, conversationId, onEvent) => invokeStream('geo-agent:run-geo-phase-two-report-stream', { geoProjectId, platform, messageId, conversationId }, onEvent),
   getLatestGeoReport: (geoProjectId, platform) => ipcRenderer.invoke('geo-agent:get-latest-geo-report', geoProjectId, platform),
