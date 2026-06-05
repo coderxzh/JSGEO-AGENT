@@ -748,6 +748,16 @@ declare global {
       updateGeoArticleDraft: (articleId: string, draft: Record<string, unknown>, messageId?: string | null) => Promise<GeoAgentGeoArticleDraft>;
       listArticleDrafts: (projectId: string, filters?: Record<string, unknown>) => Promise<GeoAgentArticleDraftListResponse>;
       updateArticleDraft: (articleId: string, patch?: Record<string, unknown>) => Promise<GeoAgentGeoArticleDraft>;
+      reviseArticleDraft: (articleId: string, options: {
+        mode: 'revise' | 'rewrite';
+        instruction?: string;
+      }) => Promise<{
+        title: string;
+        content: string;
+        suggested_channel?: string;
+        publish_target?: string;
+        revision_summary?: string;
+      }>;
       markArticleReviewed: (articleId: string) => Promise<GeoAgentGeoArticleDraft>;
       prepareArticlePreview: (articleId: string) => Promise<{ url: string; object_key: string; draft: GeoAgentGeoArticleDraft }>;
       syncChaojimeijieResources: (resourceType?: 'media' | 'we-media', page?: number, size?: number) => Promise<{ resource_type: string; total: number; synced?: number; items: GeoAgentPublishResource[] }>;

@@ -119,6 +119,7 @@ contextBridge.exposeInMainWorld('geoAgent', {
   updateGeoArticleDraft: (articleId, draft, messageId = null) => ipcRenderer.invoke('geo-agent:update-geo-article-draft', articleId, draft, messageId),
   listArticleDrafts: (projectId, filters = {}) => ipcRenderer.invoke('geo-agent:list-article-drafts', projectId, filters),
   updateArticleDraft: (articleId, patch = {}) => ipcRenderer.invoke('geo-agent:update-article-draft', articleId, patch),
+  reviseArticleDraft: (articleId, options = {}) => ipcRenderer.invoke('geo-agent:revise-article-draft', articleId, options),
   markArticleReviewed: (articleId) => ipcRenderer.invoke('geo-agent:mark-article-reviewed', articleId),
   prepareArticlePreview: (articleId) => ipcRenderer.invoke('geo-agent:prepare-article-preview', articleId),
   syncChaojimeijieResources: (resourceType = 'media', page = 1, size = 200) => ipcRenderer.invoke('geo-agent:sync-chaojimeijie-resources', resourceType, page, size),

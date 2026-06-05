@@ -1419,6 +1419,10 @@ function registerHandlers() {
     return articlePublishService.updateArticleDraft(articleId, patch);
   });
 
+  ipcMain.handle('geo-agent:revise-article-draft', async (_event, articleId, options = {}) => {
+    return articleDraftService.reviseArticleDraft(articleId, options);
+  });
+
   ipcMain.handle('geo-agent:mark-article-reviewed', async (_event, articleId) => {
     return articlePublishService.markArticleReviewed(articleId);
   });

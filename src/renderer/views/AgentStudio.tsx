@@ -371,40 +371,6 @@ function buildAssistantReasoning(
   return `${provider || 'local'} / ${model || 'unknown'} 已完成本地请求。深度思考：${options?.deepThinking ? '开启' : '关闭'}；联网搜索：${options?.webSearch ? '开启' : '不可用或关闭'}。`;
 }
 
-function updateSupportArticleDraft(
-  messages: ChatMessage[],
-  id: string,
-  draft: GeoAgentGeoArticleDraft
-) {
-  return updateMessage(messages, id, (message) => {
-    if (!message.supportArticles) {
-      return message;
-    }
-    const key = ['review', 'business_review'].includes(draft.article_type) ? 'review_draft' : 'consulting_draft';
-    const updateDraftList = (items?: GeoAgentGeoArticleDraft[]) => (
-      Array.isArray(items)
-        ? items.map((item) => (item.id === draft.id ? draft : item))
-        : items
-    );
-    const nextSupportArticles = {
-      ...message.supportArticles,
-      [key]: draft,
-      support_drafts: updateDraftList(message.supportArticles.support_drafts),
-      ranking_drafts: updateDraftList(message.supportArticles.ranking_drafts),
-    };
-    const consultingConfirmed = nextSupportArticles.consulting_draft?.status === 'confirmed';
-    const reviewConfirmed = nextSupportArticles.review_draft?.status === 'confirmed';
-    return {
-      ...message,
-      content: consultingConfirmed && reviewConfirmed
-        ? '阶段四内容资产已确认。\n\n可前往稿件管理页校对稿件、生成 OSS 预览、选择媒体投递并同步订单状态。'
-        : '草稿已确认。请继续确认其他关键草稿，完成后可进入稿件管理与发布。',
-      supportArticles: nextSupportArticles,
-      status: 'complete',
-    };
-  });
-}
-
 function getNextWorkflowAction(
   workflowState: GeoAgentWorkflowState | null,
   message: ChatMessage,
@@ -1797,27 +1763,6 @@ export function AgentStudio() {
     }));
   };
 
-  const confirmArticleDraft = async (messageId: string, articleId: string) => {
-    if (!window.geoAgent?.confirmGeoArticleDraft) {
-      setMessages((current) => updateMessage(current, messageId, {
-        content: '桌面端主进程接口尚未刷新，请完全关闭并重新启动 Electron 后再确认草稿。',
-        status: 'error',
-      }));
-      return;
-    }
-    try {
-      const draft = await window.geoAgent.confirmGeoArticleDraft(articleId, messageId);
-      await refreshWorkflowState(draft.geo_project_id);
-      setMessages((current) => updateSupportArticleDraft(current, messageId, draft));
-      window.dispatchEvent(new CustomEvent('geo-agent-geo-project-changed', { detail: { geoProjectId: draft.geo_project_id } }));
-    } catch (error) {
-      setMessages((current) => updateMessage(current, messageId, {
-        content: normalizeChatError(error),
-        status: 'error',
-      }));
-    }
-  };
-
   const runArticleDraftFromDiscovery = async (
     messageId: string,
     discovery: GeoAgentGeoSourceDiscovery,
@@ -2141,7 +2086,6 @@ export function AgentStudio() {
               onCancelPhaseTwo={cancelPhaseTwo}
               onConfirmDraft={confirmKnowledgeDraft}
               onConfirmPhaseTwo={confirmPhaseTwo}
-              onConfirmArticleDraft={confirmArticleDraft}
               onRejectDraft={rejectKnowledgeDraft}
               onCancelSupportArticles={cancelSupportArticles}
               onConfirmSupportArticles={runSupportArticlesFromDiscovery}
@@ -2369,7 +2313,6 @@ const ChatBubble: React.FC<{
   onCancelSupportArticles: (messageId: string) => void;
   onConfirmDraft: (messageId: string, draft: GeoAgentKnowledgeDraft) => void;
   onConfirmPhaseTwo: (messageId: string, project: GeoAgentGeoProject, platform?: 'doubao' | 'deepseek') => void;
-  onConfirmArticleDraft: (messageId: string, articleId: string) => void;
   onConfirmSupportArticles: (messageId: string, discovery: GeoAgentGeoSourceDiscovery) => void;
   onRejectDraft: (messageId: string, draft: GeoAgentKnowledgeDraft) => void;
   onRequestSupportArticles: (messageId: string, discovery: GeoAgentGeoSourceDiscovery) => void;
@@ -2377,7 +2320,7 @@ const ChatBubble: React.FC<{
   onRunSourceDiscovery: (messageId: string, report: GeoAgentGeoReport) => void;
   runningStageKeys: Set<string>;
   workflowState: GeoAgentWorkflowState | null;
-}> = ({ message, onCancelPhaseTwo, onCancelSupportArticles, onConfirmDraft, onConfirmPhaseTwo, onConfirmArticleDraft, onConfirmSupportArticles, onRejectDraft, onRequestSupportArticles, onRunArticleDraft, onRunSourceDiscovery, runningStageKeys, workflowState }) => {
+}> = ({ message, onCancelPhaseTwo, onCancelSupportArticles, onConfirmDraft, onConfirmPhaseTwo, onConfirmSupportArticles, onRejectDraft, onRequestSupportArticles, onRunArticleDraft, onRunSourceDiscovery, runningStageKeys, workflowState }) => {
   const nextAction = getNextWorkflowAction(workflowState, message, runningStageKeys);
   if (message.role === 'user') {
     return (
@@ -2482,7 +2425,6 @@ const ChatBubble: React.FC<{
         )}
         {message.supportArticles && (
           <SupportArticlesCard
-            onConfirmDraft={(articleId) => onConfirmArticleDraft(message.id, articleId)}
             result={message.supportArticles}
           />
         )}
@@ -3062,15 +3004,6 @@ const SourceDiscoveryCard: React.FC<{ discovery: GeoAgentGeoSourceDiscovery }> =
         limit={5}
         compact
       />
-      <details className="rounded-2xl bg-white/50 p-3 text-[12px] dark:bg-[#1f1f1f]/70">
-        <summary className="cursor-pointer font-bold text-primary">查看信源发现依据</summary>
-        <div className="mt-3 grid gap-4">
-          <ReportSection title="AI 推荐候选" items={discovery.discovery.ai_recommended_sources ?? []} limit={8} compact />
-          {(discovery.discovery.missing_evidence ?? []).length > 0 && (
-            <ReportSection title="待验证证据" items={discovery.discovery.missing_evidence ?? []} limit={8} compact />
-          )}
-        </div>
-      </details>
     </div>
   );
 };
@@ -3117,8 +3050,7 @@ const ArticleDraftCard: React.FC<{ draft: GeoAgentGeoArticleDraft }> = ({ draft 
 
 const SupportArticlesCard: React.FC<{
   result: GeoAgentGeoSupportArticleRunResponse;
-  onConfirmDraft: (articleId: string) => void;
-}> = ({ onConfirmDraft, result }) => {
+}> = ({ result }) => {
   const supportDrafts = Array.isArray(result.support_drafts) ? result.support_drafts : [];
   const rankingDrafts = Array.isArray(result.ranking_drafts) ? result.ranking_drafts : [];
   const allDrafts = [...supportDrafts, ...rankingDrafts];
@@ -3130,12 +3062,12 @@ const SupportArticlesCard: React.FC<{
           阶段四结果：首轮 9 篇内容资产
         </div>
         <p className="mt-2 text-[13px] leading-relaxed text-on-surface-variant">
-          已基于企业知识库、核心问题和阶段三信源发现生成支撑文章与排行榜文章草稿，可继续校对和补充发布 URL。
+          已生成 9 篇内容资产，可前往稿件管理校对、AI 改稿、OSS 预览和投递。
         </p>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
-        <SupportArticleSummaryCard draft={result.consulting_draft ?? null} label="企业/品牌支撑文章" onConfirmDraft={onConfirmDraft} />
-        <SupportArticleSummaryCard draft={result.review_draft ?? null} label="业务/测评支撑文章" onConfirmDraft={onConfirmDraft} />
+        <SupportArticleSummaryCard draft={result.consulting_draft ?? null} label="企业/品牌支撑文章" />
+        <SupportArticleSummaryCard draft={result.review_draft ?? null} label="业务/测评支撑文章" />
       </div>
       {allDrafts.length > 0 && (
         <div className="rounded-2xl bg-white/50 p-4 text-[12px] leading-relaxed text-on-surface-variant dark:bg-[#1f1f1f]/70">
@@ -3164,21 +3096,10 @@ const SupportArticlesCard: React.FC<{
 const SupportArticleSummaryCard: React.FC<{
   draft: GeoAgentGeoArticleDraft | null;
   label: string;
-  onConfirmDraft: (articleId: string) => void;
-}> = ({ draft, label, onConfirmDraft }) => (
+}> = ({ draft, label }) => (
   <div className="rounded-2xl bg-white/60 p-4 text-[12px] leading-relaxed text-on-surface-variant dark:bg-[#1f1f1f]/70">
     <div className="mb-2 flex items-center justify-between gap-2">
       <span className="font-bold text-primary">{label}</span>
-      {draft && draft.status !== 'failed' && (
-        <span className={cn(
-          'rounded-full px-2 py-0.5 text-[10px] font-bold',
-          draft.status === 'confirmed'
-            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-200'
-            : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-200'
-        )}>
-          {draft.status === 'confirmed' ? '已确认' : '待确认'}
-        </span>
-      )}
     </div>
     {!draft ? (
       <div>暂未生成</div>
@@ -3194,20 +3115,6 @@ const SupportArticleSummaryCard: React.FC<{
             {draft.draft.content || '暂无正文'}
           </div>
         </details>
-        {draft.status !== 'confirmed' && (
-          <div className="flex justify-end pt-1">
-            <div className="-mt-2">
-              <AssistantWorkflowActionBar
-                confirmLabel="确认此草稿"
-                id={draft.id}
-                onConfirm={() => onConfirmDraft(draft.id)}
-                state="approval-requested"
-                title="确认后此草稿可进入稿件管理页发布分发。"
-                variant="action"
-              />
-            </div>
-          </div>
-        )}
       </div>
     )}
   </div>

@@ -6,7 +6,7 @@ const questionPoolService = require('./questionPoolService.cjs');
 const sourceDiscoveryService = require('./sourceDiscoveryService.cjs');
 const skillService = require('./skillService.cjs');
 const { streamLLM, parseJsonContent } = require('./llmGateway.cjs');
-const { getTaskPolicy } = require('./modelPolicyService.cjs');
+const { getTaskPolicy, NETWORK_MODES } = require('./modelPolicyService.cjs');
 const { fieldText } = require('./profileFieldService.cjs');
 
 const SUPPORT_PLAN = [
@@ -331,6 +331,49 @@ function buildArticleMessages({ profile, questions, discovery, ragChunks, slot }
   ];
 }
 
+function buildRevisionMessages({ draft, profile, ragChunks, mode, instruction }) {
+  const rewrite = mode === 'rewrite';
+  return [
+    {
+      role: 'system',
+      content: `你是 GEO 稿件编辑助手，负责在不新增未经证实事实的前提下优化文章。
+硬性规则：
+- 只使用原稿、企业知识库、目标问题、文章类型和 RAG 片段中的事实。
+- 不编造荣誉、排名、合作品牌、价格、服务城市、客户案例或发布结果。
+- 输出必须是合法 JSON 对象，不要输出 Markdown 代码块或解释文字。
+- 返回字段只包含 title、content、suggested_channel、publish_target、revision_summary。`,
+    },
+    {
+      role: 'user',
+      content: JSON.stringify({
+        task: rewrite ? 'rewrite_article_draft' : 'revise_article_draft',
+        mode,
+        instruction: instruction || (rewrite ? '基于当前文章重写一版，表达更清晰，结构更适合 AI 推荐引用。' : ''),
+        required_output: {
+          title: '修改后的标题',
+          content: '修改后的完整 Markdown 正文',
+          suggested_channel: '可选，建议发布渠道',
+          publish_target: '可选，建议发布目标',
+          revision_summary: '简要说明改了什么',
+        },
+        article_context: {
+          article_id: draft.id,
+          article_type: draft.article_type,
+          article_role: draft.draft.article_role || '',
+          article_theme: draft.draft.article_theme || '',
+          target_question: draft.draft.target_question || '',
+          mapped_question_ids: draft.draft.mapped_question_ids || [],
+          current_title: draft.draft.title || '',
+          current_content: draft.draft.content || '',
+          current_suggested_channel: draft.draft.suggested_channel || draft.draft.publish_target || '',
+        },
+        enterprise_profile: profileSnapshot(profile),
+        rag_chunks: ragChunks,
+      }),
+    },
+  ];
+}
+
 async function generateDraftForSlot({ projectId, platform, profile, questionSet, discovery, slot, index, onEvent }) {
   const questions = selectQuestionsForSlot(getConfirmedQuestions(questionSet), slot, index);
   const ragQuery = buildRagQuery(profile, questions, slot);
@@ -554,6 +597,67 @@ function updateArticleDraft(articleId, draftPatch = {}) {
   return getArticleDraft(articleId);
 }
 
+async function reviseArticleDraft(articleId, options = {}) {
+  const mode = normalizeText(options.mode) === 'rewrite' ? 'rewrite' : 'revise';
+  const instruction = normalizeText(options.instruction);
+  if (mode === 'revise' && !instruction) {
+    throw new Error('请先输入修改意见。');
+  }
+
+  const draft = getArticleDraft(articleId);
+  const title = normalizeText(draft.draft.title);
+  const content = normalizeText(draft.draft.content);
+  if (!title || !content) throw new Error('稿件标题和正文不能为空。');
+
+  const profileResponse = knowledgeService.getKnowledgeProfile(draft.enterprise_project_id);
+  const profile = profileResponse.profile || {};
+  const ragQuery = [
+    title,
+    draft.draft.target_question,
+    draft.draft.article_theme,
+    instruction,
+    fieldText(profile, 'company_name'),
+    fieldText(profile, 'offerings'),
+    fieldText(profile, 'target_keywords'),
+  ].filter(Boolean).join(' ');
+  const ragResponse = await knowledgeService.searchKnowledge({
+    projectId: draft.enterprise_project_id,
+    query: ragQuery,
+    limit: 6,
+  });
+  const ragChunks = (ragResponse.entries || []).map((entry) => ({
+    id: entry.id,
+    title: entry.title,
+    content: entry.content,
+    metadata: entry.metadata || entry.metadata_json || null,
+  }));
+
+  const policy = getTaskPolicy('support_content_generation', { platform: draft.platform });
+  const result = await streamLLM({
+    messages: buildRevisionMessages({ draft, profile, ragChunks, mode, instruction }),
+    temperature: mode === 'rewrite' ? 0.45 : 0.25,
+    maxTokens: 6000,
+    provider: policy.provider,
+    model: policy.model,
+    networkMode: NETWORK_MODES.NONE,
+    deepThinking: policy.deep_thinking,
+    taskType: 'support_content_generation',
+    apiFamily: policy.api_family,
+  });
+
+  const parsed = parseDraftContent(result.content);
+  const nextTitle = normalizeText(parsed.title) || title;
+  const nextContent = normalizeText(parsed.content);
+  if (!nextContent) throw new Error('AI 改稿没有返回正文，请重试。');
+  return {
+    title: nextTitle,
+    content: nextContent,
+    suggested_channel: normalizeText(parsed.suggested_channel) || normalizeText(draft.draft.suggested_channel) || normalizeText(draft.draft.publish_target),
+    publish_target: normalizeText(parsed.publish_target) || normalizeText(parsed.suggested_channel) || normalizeText(draft.draft.publish_target) || normalizeText(draft.draft.suggested_channel),
+    revision_summary: normalizeText(parsed.revision_summary),
+  };
+}
+
 module.exports = {
   confirmArticleDraft,
   generateArticleDraft,
@@ -561,5 +665,6 @@ module.exports = {
   generateSupportArticlesStream,
   getArticleDraft,
   getLatestArticleDraft,
+  reviseArticleDraft,
   updateArticleDraft,
 };

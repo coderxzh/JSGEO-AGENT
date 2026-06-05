@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Ban, Bell, CheckCircle2, CircleDollarSign, ExternalLink, FileText, Filter, Loader2, PenLine, RefreshCw, RotateCcw, Search, Send, Shield, Sparkles, Trophy, X } from 'lucide-react';
+import { AlertTriangle, Ban, Bell, CheckCircle2, CircleDollarSign, ExternalLink, FileText, Filter, Loader2, PenLine, RefreshCw, RotateCcw, Search, Send, Shield, Sparkles, Trash2, Trophy, X } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useEnterprise } from '../context/EnterpriseContext';
 
@@ -68,6 +68,7 @@ export function Drafts() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedDraft, setSelectedDraft] = useState<GeoAgentGeoArticleDraft | null>(null);
+  const [selectedDraftIntent, setSelectedDraftIntent] = useState<'edit' | 'ai'>('edit');
   const [resourceDraft, setResourceDraft] = useState<GeoAgentGeoArticleDraft | null>(null);
   const [isSyncingOrders, setIsSyncingOrders] = useState(false);
 
@@ -140,6 +141,31 @@ export function Drafts() {
     setError(null);
     try {
       await window.geoAgent.managePublishOrder(draft.id, action, { reason: text(reason) });
+      await loadDrafts();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : String(actionError));
+    }
+  };
+
+  const removeDraft = async (draft: GeoAgentGeoArticleDraft) => {
+    if (!window.geoAgent?.updateArticleDraft) return;
+    const status = publishStatus(draft);
+    if (['publishing', 'published'].includes(status)) {
+      setError('发布中或已发布稿件不能移除。');
+      return;
+    }
+    const title = text(draft.draft.title) || '未命名草稿';
+    if (!window.confirm(`确认移除草稿「${title}」？移除后默认列表将不再展示。`)) return;
+    setError(null);
+    try {
+      await window.geoAgent.updateArticleDraft(draft.id, {
+        status: 'archived',
+        publication_evidence: {
+          ...publication(draft),
+          status: 'archived',
+          archived_at: new Date().toISOString(),
+        },
+      });
       await loadDrafts();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : String(actionError));
@@ -263,9 +289,17 @@ export function Drafts() {
                   key={draft.id}
                   draft={draft}
                   rankingReady={rankingReady}
-                  onEdit={() => setSelectedDraft(draft)}
+                  onEdit={() => {
+                    setSelectedDraftIntent('edit');
+                    setSelectedDraft(draft);
+                  }}
+                  onAiEdit={() => {
+                    setSelectedDraftIntent('ai');
+                    setSelectedDraft(draft);
+                  }}
                   onMarkReviewed={() => markReviewed(draft)}
                   onPublish={() => setResourceDraft(draft)}
+                  onRemove={() => removeDraft(draft)}
                   onSyncOrder={() => syncOrder(draft)}
                   onManageOrder={(action) => manageOrder(draft, action)}
                 />
@@ -278,6 +312,7 @@ export function Drafts() {
       {selectedDraft && (
         <EditDraftModal
           draft={selectedDraft}
+          initialAiOpen={selectedDraftIntent === 'ai'}
           onClose={() => setSelectedDraft(null)}
           onSaved={async () => {
             setSelectedDraft(null);
@@ -353,14 +388,16 @@ function TableHead({ children, className }: { children: React.ReactNode; classNa
 type DraftRowProps = {
   draft: GeoAgentGeoArticleDraft;
   rankingReady: boolean;
+  onAiEdit: () => void;
   onEdit: () => void;
   onMarkReviewed: () => void;
   onPublish: () => void;
+  onRemove: () => void;
   onSyncOrder: () => void;
   onManageOrder: (action: PublishOrderAction) => void;
 };
 
-const DraftRow: React.FC<DraftRowProps> = ({ draft, rankingReady, onEdit, onMarkReviewed, onPublish, onSyncOrder, onManageOrder }) => {
+const DraftRow: React.FC<DraftRowProps> = ({ draft, rankingReady, onAiEdit, onEdit, onMarkReviewed, onPublish, onRemove, onSyncOrder, onManageOrder }) => {
   const role = articleRole(draft);
   const status = publishStatus(draft);
   const evidence = publication(draft);
@@ -368,6 +405,7 @@ const DraftRow: React.FC<DraftRowProps> = ({ draft, rankingReady, onEdit, onMark
   const previewUrl = text(evidence.preview_url);
   const order = draft.publish_order;
   const publishDisabled = role === 'ranking' && !rankingReady;
+  const lockedByPublish = ['publishing', 'published'].includes(status);
   return (
     <tr className="border-t border-outline-variant/50 transition-colors hover:bg-surface-container/40">
       <td className="px-5 py-4 align-top">
@@ -412,6 +450,9 @@ const DraftRow: React.FC<DraftRowProps> = ({ draft, rankingReady, onEdit, onMark
       <td className="px-5 py-4 align-top">
         <div className="flex flex-wrap justify-end gap-2">
           <IconButton title="编辑" onClick={onEdit}><PenLine className="size-4" /></IconButton>
+          <IconButton title="AI 改稿" onClick={onAiEdit} disabled={lockedByPublish}>
+            <Sparkles className="size-4" />
+          </IconButton>
           <IconButton title="标记已校对" onClick={onMarkReviewed} disabled={status === 'published'}>
             <CheckCircle2 className="size-4" />
           </IconButton>
@@ -441,6 +482,9 @@ const DraftRow: React.FC<DraftRowProps> = ({ draft, rankingReady, onEdit, onMark
           <IconButton title={publishDisabled ? '请先校对 6 篇支撑稿' : '选择媒体并投递'} onClick={onPublish} disabled={publishDisabled || status === 'published'}>
             <Send className="size-4" />
           </IconButton>
+          <IconButton title="移除草稿" onClick={onRemove} disabled={lockedByPublish}>
+            <Trash2 className="size-4" />
+          </IconButton>
         </div>
       </td>
     </tr>
@@ -461,12 +505,42 @@ function IconButton({ children, disabled, onClick, title }: { children: React.Re
   );
 }
 
-function EditDraftModal({ draft, onClose, onSaved }: { draft: GeoAgentGeoArticleDraft; onClose: () => void; onSaved: () => Promise<void> }) {
+function EditDraftModal({ draft, initialAiOpen = false, onClose, onSaved }: { draft: GeoAgentGeoArticleDraft; initialAiOpen?: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
   const [title, setTitle] = useState(text(draft.draft.title));
   const [content, setContent] = useState(text(draft.draft.content));
   const [suggestedChannel, setSuggestedChannel] = useState(text(draft.draft.suggested_channel || draft.draft.publish_target));
+  const [aiOpen, setAiOpen] = useState(initialAiOpen);
+  const [instruction, setInstruction] = useState('');
+  const [isRevising, setIsRevising] = useState(false);
+  const [revisionSummary, setRevisionSummary] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const lockedByPublish = ['publishing', 'published'].includes(publishStatus(draft));
+
+  const runRevision = async (mode: 'revise' | 'rewrite') => {
+    if (!window.geoAgent?.reviseArticleDraft) return;
+    if (mode === 'revise' && !text(instruction)) {
+      setError('请先输入修改意见。');
+      return;
+    }
+    setIsRevising(true);
+    setError(null);
+    setRevisionSummary('');
+    try {
+      const result = await window.geoAgent.reviseArticleDraft(draft.id, {
+        mode,
+        instruction: text(instruction),
+      });
+      setTitle(text(result.title) || title);
+      setContent(text(result.content) || content);
+      setSuggestedChannel(text(result.suggested_channel || result.publish_target) || suggestedChannel);
+      setRevisionSummary(text(result.revision_summary) || 'AI 已生成修改版本，请确认后保存。');
+    } catch (revisionError) {
+      setError(revisionError instanceof Error ? revisionError.message : String(revisionError));
+    } finally {
+      setIsRevising(false);
+    }
+  };
 
   const save = async () => {
     if (!window.geoAgent?.updateArticleDraft) return;
@@ -478,6 +552,18 @@ function EditDraftModal({ draft, onClose, onSaved }: { draft: GeoAgentGeoArticle
         content,
         suggested_channel: suggestedChannel,
         publish_target: suggestedChannel,
+        ...(!lockedByPublish
+          ? {
+            status: 'draft',
+            publication_evidence: {
+              ...publication(draft),
+              status: 'draft',
+              preview_url: null,
+              preview_object_key: null,
+              preview_generated_at: null,
+            },
+          }
+          : {}),
       });
       await onSaved();
     } catch (saveError) {
@@ -496,6 +582,60 @@ function EditDraftModal({ draft, onClose, onSaved }: { draft: GeoAgentGeoArticle
         <Field label="建议发布渠道">
           <input className="w-full rounded-md border border-outline-variant bg-surface px-3 py-2 text-[13px] outline-none focus:border-secondary" value={suggestedChannel} onChange={(event) => setSuggestedChannel(event.currentTarget.value)} />
         </Field>
+        <div className="rounded-md border border-outline-variant/60 bg-surface-container/40 p-3">
+          <button
+            className="flex w-full items-center justify-between gap-3 text-left text-[12px] font-bold text-primary"
+            onClick={() => setAiOpen((value) => !value)}
+            type="button"
+          >
+            <span className="inline-flex items-center gap-2">
+              <Sparkles className="size-4 text-secondary" />
+              AI 改稿
+            </span>
+            <span className="text-[11px] text-on-surface-variant">{aiOpen ? '收起' : '展开'}</span>
+          </button>
+          {lockedByPublish && (
+            <div className="rounded-md bg-amber-50 px-3 py-2 text-[12px] text-amber-700 dark:bg-amber-950/30 dark:text-amber-200">
+              当前稿件已进入发布流程，建议不要修改正文，避免与订单或已发布链接不一致。
+            </div>
+          )}
+          {aiOpen && (
+            <div className="mt-3 space-y-3">
+              <textarea
+                className="h-24 w-full resize-none rounded-md border border-outline-variant bg-surface px-3 py-2 text-[12px] leading-relaxed outline-none focus:border-secondary"
+                placeholder="输入修改意见，例如：语气更专业，减少夸张表述，增加本地服务优势。"
+                value={instruction}
+                onChange={(event) => setInstruction(event.currentTarget.value)}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  className="inline-flex items-center gap-2 rounded-md bg-secondary px-3 py-2 text-[11px] font-bold text-on-secondary disabled:opacity-50"
+                  disabled={isRevising || lockedByPublish}
+                  onClick={() => runRevision('revise')}
+                  type="button"
+                >
+                  {isRevising ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+                  按意见修改
+                </button>
+                <button
+                  className="inline-flex items-center gap-2 rounded-md border border-outline-variant/60 px-3 py-2 text-[11px] font-bold text-primary hover:bg-surface-container disabled:opacity-50"
+                  disabled={isRevising || lockedByPublish}
+                  onClick={() => runRevision('rewrite')}
+                  type="button"
+                >
+                  {isRevising ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+                  基于此文重写
+                </button>
+                <span className="text-[11px] text-on-surface-variant">结果会先填入编辑框，确认后再保存。</span>
+              </div>
+              {revisionSummary && (
+                <div className="rounded-md bg-secondary/10 px-3 py-2 text-[12px] text-secondary">
+                  {revisionSummary}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
         <Field label="正文 Markdown">
           <textarea className="h-[360px] w-full resize-none rounded-md border border-outline-variant bg-surface px-3 py-2 font-mono text-[12px] leading-relaxed outline-none focus:border-secondary" value={content} onChange={(event) => setContent(event.currentTarget.value)} />
         </Field>

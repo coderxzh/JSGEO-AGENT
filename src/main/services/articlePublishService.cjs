@@ -98,6 +98,12 @@ function listArticleDrafts(projectIdOrGeoId, filters = {}) {
   const role = text(filters.article_role || filters.role);
   const platform = text(filters.platform);
 
+  if (!filters.include_archived) {
+    drafts = drafts.filter((draft) => {
+      const publishStatus = text(publicationOf(draft).status || draft.status);
+      return publishStatus !== 'archived' && draft.status !== 'archived';
+    });
+  }
   if (platform) drafts = drafts.filter((draft) => draft.platform === platform);
   if (status) {
     drafts = drafts.filter((draft) => {
