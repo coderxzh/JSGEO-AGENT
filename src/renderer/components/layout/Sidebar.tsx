@@ -34,7 +34,7 @@ const navItems = [
 export function Sidebar({ currentView, onViewChange, isCollapsed, onCollapseToggle }: SidebarProps) {
   return (
     <nav className={cn(
-      "fixed left-0 top-[40px] h-[calc(100%-40px)] w-[240px] z-50 bg-surface-container-low border-r border-outline-variant/60 flex flex-col transition-transform duration-300 ease-in-out",
+      "fixed left-0 top-[40px] h-[calc(100%-40px)] w-[240px] z-50 bg-surface-container-low flex flex-col transition-transform duration-300 ease-in-out",
       isCollapsed ? "-translate-x-full md:pointer-events-none" : "translate-x-0"
     )}>
       <div className="px-5 h-[64px] flex items-center justify-between shrink-0">
