@@ -1,4 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Upload } from 'lucide-react';
 import {
   ArrowUp,
   Brain,
@@ -86,6 +87,14 @@ import {
 } from '../components/ai-elements/sources';
 import { Suggestion, Suggestions } from '../components/ai-elements/suggestion';
 import { cn } from '../lib/utils';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '../components/ui/dialog';
+import { Button } from '../components/ui/button';
 import { profileFieldText, toProfileEvidenceField } from '../lib/profileFields';
 import { PROFILE_FIELD_DEFINITIONS } from '../lib/profileSchema';
 import { TooltipProvider } from '../components/ui/tooltip';
@@ -208,6 +217,7 @@ type ProfileFieldDefinition = {
   key: keyof GeoAgentEnterpriseProfileInput;
   label: string;
   group: string;
+  isArray?: boolean;
 };
 
 const profileFieldDefinitions = PROFILE_FIELD_DEFINITIONS as ProfileFieldDefinition[];
@@ -663,6 +673,142 @@ async function ensureDraftEnterpriseProfile(seedText: string) {
   return projectId;
 }
 
+type SupplementDraftDialogProps = {
+  draft: GeoAgentKnowledgeDraft;
+  patch: Record<string, string | string[]>;
+  uploadedImages: { id: string; name: string; size: number; type: string; previewUrl: string }[];
+  onClose: () => void;
+  onSubmit: (patchedProfile: Record<string, string | string[]>, uploadedImages: { id: string; name: string; size: number; type: string; previewUrl: string }[]) => void;
+};
+
+const SupplementDraftDialog: React.FC<SupplementDraftDialogProps> = ({ draft, patch, uploadedImages, onClose, onSubmit }) => {
+  const [localPatch, setLocalPatch] = useState<Record<string, string | string[]>>(patch);
+  const [localImages, setLocalImages] = useState(uploadedImages);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const missingFields = (draft.missing_fields || []) as string[];
+  const missingFieldDefs = missingFields
+    .map((label) => PROFILE_FIELD_DEFINITIONS.find((f) => f.label === label))
+    .filter(Boolean) as ProfileFieldDefinition[];
+
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget as HTMLInputElement;
+    const files = Array.from(input.files ?? []);
+    const next = files
+      .filter((f) => f.type.startsWith('image/'))
+      .map((file) => ({
+        id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        previewUrl: URL.createObjectURL(file),
+      }));
+    setLocalImages((prev) => [...prev, ...next]);
+    event.target.value = '';
+  };
+
+  const handleRemoveImage = (id: string) => {
+    const removed = localImages.find((img) => img.id === id);
+    if (removed) URL.revokeObjectURL(removed.previewUrl);
+    setLocalImages((prev) => prev.filter((img) => img.id !== id));
+  };
+
+  const handleSubmit = async () => {
+    setIsSubmitting(true);
+    try {
+      await onSubmit(localPatch, localImages);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="!max-w-2xl max-h-[90vh] overflow-hidden">
+        <DialogHeader className="pb-0">
+          <DialogTitle className="text-xl font-bold tracking-tight text-foreground">补充企业资料</DialogTitle>
+        </DialogHeader>
+        <div className="flex-1 min-h-0 space-y-6 overflow-y-auto py-4">
+          {missingFieldDefs.map((def) => {
+            const value = localPatch[def.key] ?? '';
+            if (def.key === 'image_notes') {
+              return (
+                <div key={def.key} className="space-y-2.5">
+                  <label className="text-sm font-semibold text-foreground">{def.label}</label>
+                  <textarea
+                    className="w-full rounded-lg border border-outline-variant/50 bg-transparent px-4 py-3 text-sm text-foreground placeholder:text-on-surface-variant/40 focus-visible:outline-none focus-visible:border-secondary transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50"
+                    rows={2}
+                    value={Array.isArray(value) ? value.join('、') : (value as string)}
+                    onChange={(e) => setLocalPatch((p) => ({ ...p, [def.key]: e.target.value }))}
+                    placeholder={`请填写${def.label}…`}
+                  />
+                  <div className="pt-1">
+                    <span className="mb-2 block text-sm font-semibold text-foreground">图片上传</span>
+                    <label className="flex min-h-[120px] cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-outline-variant/40 bg-transparent px-4 py-6 text-center transition-colors duration-150 hover:border-secondary hover:bg-secondary/5">
+                      <Upload className="mb-2 h-6 w-6 text-secondary" />
+                      <span className="text-sm font-semibold text-foreground">上传公司/门店/产品图片</span>
+                      <span className="mt-1 text-xs text-on-surface-variant">支持门头照、全景图、产品图等</span>
+                      <input accept="image/*" className="sr-only" multiple onChange={handleImageUpload} type="file" />
+                    </label>
+                    {localImages.length > 0 && (
+                      <div className="mt-3 grid grid-cols-5 gap-2.5">
+                        {localImages.map((img) => (
+                          <div className="group relative overflow-hidden rounded-lg border border-outline-variant/30 bg-surface-container-lowest" key={img.id}>
+                            <img alt={img.name} className="aspect-video w-full object-cover" src={img.previewUrl} />
+                            <button
+                              className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover:opacity-100"
+                              onClick={() => handleRemoveImage(img.id)} title="移除" type="button"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+            if (def.isArray) {
+              const arr = Array.isArray(value) ? value : (value ? [value] : []);
+              return (
+                <div key={def.key} className="space-y-2">
+                  <label className="text-sm font-semibold text-foreground">
+                    {def.label}
+                    <span className="ml-1.5 text-xs font-normal text-on-surface-variant">多个用换行分隔</span>
+                  </label>
+                  <textarea
+                    className="w-full rounded-lg border border-outline-variant/50 bg-transparent px-4 py-3 text-sm text-foreground placeholder:text-on-surface-variant/40 focus-visible:outline-none focus-visible:border-secondary transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50"
+                    rows={3}
+                    value={arr.join('\n')}
+                    onChange={(e) => setLocalPatch((p) => ({ ...p, [def.key]: e.target.value.split('\n').filter(Boolean) }))}
+                    placeholder={`请填写${def.label}…`}
+                  />
+                </div>
+              );
+            }
+            return (
+              <div key={def.key} className="space-y-2">
+                <label className="text-sm font-semibold text-foreground">{def.label}</label>
+                <input
+                  className="flex h-10 w-full rounded-lg border border-outline-variant/50 bg-transparent px-4 py-2 text-sm text-foreground file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-on-surface-variant/40 focus-visible:outline-none focus-visible:border-secondary transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-50"
+                  value={value as string}
+                  onChange={(e) => setLocalPatch((p) => ({ ...p, [def.key]: e.target.value }))}
+                  placeholder={`请填写${def.label}…`}
+                />
+              </div>
+            );
+          })}
+        </div>
+        <DialogFooter className="gap-3 py-4 border-t-0">
+          <Button variant="ghost" className="h-9 px-4 text-sm font-medium" onClick={onClose} type="button">取消</Button>
+          <Button className="h-9 px-5 text-sm font-semibold" onClick={handleSubmit} disabled={isSubmitting} type="button">{isSubmitting ? '提交中…' : '提交'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 export function AgentStudio() {
   const { currentEnterprise, hasEnterprises, isLoadingEnterprises, refreshEnterprises, setEnterpriseId } = useEnterprise();
   const [isSkillsOpen, setIsSkillsOpen] = useState(false);
@@ -675,6 +821,28 @@ export function AgentStudio() {
   const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
   const [geoProject, setGeoProject] = useState<GeoAgentGeoProject | null>(null);
   const [workflowState, setWorkflowState] = useState<GeoAgentWorkflowState | null>(null);
+  const [supplementDraftDialog, setSupplementDraftDialog] = useState<{
+    messageId: string;
+    draft: GeoAgentKnowledgeDraft;
+  } | null>(null);
+
+  const supplementDraftOverlay = supplementDraftDialog ? (
+    <SupplementDraftDialog
+      draft={supplementDraftDialog.draft}
+      patch={{}}
+      uploadedImages={[]}
+      onClose={() => setSupplementDraftDialog(null)}
+      onSubmit={async (patchedProfile) => {
+        const updatedDraft = {
+          ...supplementDraftDialog.draft,
+          profile: { ...supplementDraftDialog.draft.profile, ...patchedProfile },
+        };
+        setMessages((current) => updateMessage(current, supplementDraftDialog.messageId, { knowledgeDraft: updatedDraft }));
+        setSupplementDraftDialog(null);
+      }}
+    />
+  ) : null;
+
   const inputShellRef = useRef<HTMLDivElement | null>(null);
   const openConversationRequestRef = useRef(0);
   const phaseTwoPromptInFlightRef = useRef<Set<string>>(new Set());
@@ -1857,14 +2025,8 @@ export function AgentStudio() {
     }
   };
 
-  const continueKnowledgeDraftInput = (messageId: string) => {
-    setMessages((current) => updateMessage(current, messageId, {
-      content: '可以继续上传资料或补充说明，我会基于新增内容重新生成知识库草稿。当前草稿先保留，避免流程中断。',
-      confirmationState: 'approval-requested',
-      confirmationApproved: undefined,
-      actionBusy: false,
-      status: 'complete',
-    }));
+  const continueKnowledgeDraftInput = (messageId: string, draft: GeoAgentKnowledgeDraft) => {
+    setSupplementDraftDialog({ messageId, draft });
   };
 
   const selectSkill = (skill: GeoAgentSkill) => {
@@ -2201,6 +2363,7 @@ export function AgentStudio() {
         </div>
       </div>
     </div>
+    {supplementDraftOverlay}
     </TooltipProvider>
   );
 }
@@ -2269,7 +2432,7 @@ const AttachmentAwareSubmit: React.FC<{
 
 const ChatBubble: React.FC<{
   message: ChatMessage;
-  onContinueKnowledgeDraft: (messageId: string) => void;
+  onContinueKnowledgeDraft: (messageId: string, draft: GeoAgentKnowledgeDraft) => void;
   onConfirmDraft: (messageId: string, draft: GeoAgentKnowledgeDraft) => void;
   onConfirmPhaseTwo: (messageId: string, project: GeoAgentGeoProject, platform?: 'doubao' | 'deepseek') => void;
   onConfirmSupportArticles: (messageId: string, discovery: GeoAgentGeoSourceDiscovery) => void;
@@ -2399,7 +2562,7 @@ const ChatBubble: React.FC<{
         <AssistantConfirmationBar
           approved={message.confirmationApproved}
           id={message.knowledgeDraft.id}
-          onCancel={() => onContinueKnowledgeDraft(message.id)}
+          onCancel={() => onContinueKnowledgeDraft(message.id, message.knowledgeDraft!)}
           onConfirm={() => onConfirmDraft(message.id, message.knowledgeDraft!)}
           state={message.confirmationState ?? 'approval-requested'}
           title="确认后将建立企业知识库，并生成本地知识条目与向量索引。"
@@ -2408,19 +2571,36 @@ const ChatBubble: React.FC<{
           busy={message.actionBusy}
         />
       )}
-      {message.phaseTwoPrompt && message.confirmationState === 'approval-requested' && (
-        <AssistantConfirmationBar
-          approved={message.confirmationApproved}
-          id={message.phaseTwoPrompt.id}
-          onCancel={() => onConfirmPhaseTwo(message.id, message.phaseTwoPrompt!, message.phaseTwoPlatform)}
-          onConfirm={() => onConfirmPhaseTwo(message.id, message.phaseTwoPrompt!, message.phaseTwoPlatform)}
-          state={message.confirmationState ?? 'approval-requested'}
-          title={`进入阶段二，生成${platformLabelFor(message.phaseTwoPlatform ?? 'doubao')}排行榜问题池。`}
-          confirmLabel={`生成${platformLabelFor(message.phaseTwoPlatform ?? 'doubao')}排行榜问题池`}
-          cancelLabel="重新生成问题池"
-          busy={message.actionBusy}
-        />
-      )}
+      {message.phaseTwoPrompt && message.confirmationState === 'approval-requested' && (() => {
+        const stageStatus = workflowState?.platforms[message.phaseTwoPlatform ?? 'doubao']?.stages.stage_2?.status;
+        const isCompleted = stageStatus === 'completed';
+
+        if (isCompleted) {
+          return (
+            <AssistantConfirmationBar
+              approved={message.confirmationApproved}
+              id={message.phaseTwoPrompt.id}
+              onCancel={() => onConfirmPhaseTwo(message.id, message.phaseTwoPrompt!, message.phaseTwoPlatform)}
+              onConfirm={() => onConfirmPhaseTwo(message.id, message.phaseTwoPrompt!, message.phaseTwoPlatform)}
+              state={message.confirmationState ?? 'approval-requested'}
+              title={`进入阶段二，生成${platformLabelFor(message.phaseTwoPlatform ?? 'doubao')}排行榜问题池。`}
+              confirmLabel="重新生成问题池"
+              busy={message.actionBusy}
+            />
+          );
+        }
+        return (
+          <AssistantConfirmationBar
+            approved={message.confirmationApproved}
+            id={message.phaseTwoPrompt.id}
+            onConfirm={() => onConfirmPhaseTwo(message.id, message.phaseTwoPrompt!, message.phaseTwoPlatform)}
+            state={message.confirmationState ?? 'approval-requested'}
+            title={`进入阶段二，生成${platformLabelFor(message.phaseTwoPlatform ?? 'doubao')}排行榜问题池。`}
+            confirmLabel={`生成${platformLabelFor(message.phaseTwoPlatform ?? 'doubao')}排行榜问题池`}
+            busy={message.actionBusy}
+          />
+        );
+      })()}
       {message.supportArticlesPrompt && message.confirmationState === 'approval-requested' && (
         <AssistantConfirmationBar
           approved={message.confirmationApproved}

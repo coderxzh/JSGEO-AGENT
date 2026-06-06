@@ -16,6 +16,7 @@ const {
 const { getSkill } = require('./skillService.cjs');
 const {
   PROFILE_ARRAY_FIELDS,
+  PROFILE_FIELD_DEFINITIONS,
   PROFILE_FIELD_KEYS,
   REQUIRED_PROFILE_FIELDS,
 } = require('../../shared/profileSchema.cjs');
@@ -183,8 +184,17 @@ function normalizeFact(field, evidence = {}, index = 0) {
 }
 
 function missingFieldsForProfile(profile = {}, modelMissingFields = []) {
-  const missing = new Set(modelMissingFields.map(normalizeText).filter(Boolean));
-  REQUIRED_FIELDS.forEach(([field, label]) => {
+  const missing = new Set();
+  // 归一化：把模型返回的英文字段名映射为中文 label，避免英文 key 和中文 label 重复出现
+  modelMissingFields.forEach((key) => {
+    const normalized = normalizeText(key);
+    if (!normalized) return;
+    const def = PROFILE_FIELD_DEFINITIONS.find(
+      (f) => f.key === normalized || (f.aliases || []).includes(normalized)
+    );
+    missing.add(def ? def.label : normalized);
+  });
+  REQUIRED_PROFILE_FIELDS.forEach(([field, label]) => {
     if (!fieldText(profile, field) || fieldText(profile, field) === UNKNOWN_COMPANY_NAME) {
       missing.add(label);
     }
