@@ -156,6 +156,8 @@ contextBridge.exposeInMainWorld('geoAgent', {
   createKnowledgeDraftStream: (draft, onEvent) => invokeStream('geo-agent:create-knowledge-draft-stream', draft, onEvent),
   confirmKnowledgeDraft: (draftId, profile, conversationId = null, draft = null) => ipcRenderer.invoke('geo-agent:confirm-knowledge-draft', { draftId, profile, conversationId, draft }),
   rejectKnowledgeDraft: (draftId) => ipcRenderer.invoke('geo-agent:reject-knowledge-draft', draftId),
+  buildKnowledgeDiff: (projectId, draftId) => ipcRenderer.invoke('geo-agent:build-knowledge-diff', { projectId, draftId }),
+  applyKnowledgeDiff: (payload) => ipcRenderer.invoke('geo-agent:apply-knowledge-diff', payload),
   reindexKnowledge: (projectId) => ipcRenderer.invoke('geo-agent:reindex-knowledge', projectId),
   getKnowledgeIndexStatus: (projectId) => ipcRenderer.invoke('geo-agent:get-knowledge-index-status', projectId),
   getSkills: () => ipcRenderer.invoke('geo-agent:get-skills'),

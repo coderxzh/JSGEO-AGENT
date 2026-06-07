@@ -12,6 +12,7 @@ const {
   normalizeText: normalizeProfileText,
   toEvidenceField,
 } = require('./profileFieldService.cjs');
+const { diffProfiles, applyDiffDecisions } = require('./profileDiffService.cjs');
 const projectService = require('./projectService.cjs');
 const {
   PROFILE_FIELD_DEFINITIONS,
@@ -961,6 +962,70 @@ async function confirmKnowledgeDraft(payload = {}) {
   };
 }
 
+function buildDraftDiff(payload = {}) {
+  const draftId = payload.draftId || payload.id;
+  if (!draftId) throw new Error('draftId is required.');
+  const draft = getDraft(draftId);
+  const projectId = payload.projectId || draft.project_id;
+  if (!projectId) throw new Error('projectId is required.');
+
+  const draftProfile = normalizeProfile(parseJson(draft.profile_json, {}));
+  const existingProfile = projectExists(projectId)
+    ? getKnowledgeProfile(projectId).profile
+    : {};
+  const diff = diffProfiles(existingProfile || {}, draftProfile);
+
+  return {
+    projectId,
+    draftId,
+    diff,
+  };
+}
+
+async function applyDraftDiff(payload = {}) {
+  const draftId = payload.draftId || payload.id;
+  if (!draftId) throw new Error('draftId is required.');
+  const draft = getDraft(draftId);
+  const projectId = payload.projectId || draft.project_id;
+  if (!projectId) throw new Error('projectId is required.');
+
+  const draftProfile = normalizeProfile(parseJson(draft.profile_json, {}));
+  const existingProfile = projectExists(projectId)
+    ? getKnowledgeProfile(projectId).profile
+    : {};
+  const merged = applyDiffDecisions(existingProfile || {}, draftProfile, payload.decisions || {});
+  const response = saveProfile({ ...merged, project_id: projectId });
+  const savedProjectId = response.profile.project_id || response.profile.id;
+
+  getDb().prepare(`
+    UPDATE knowledge_drafts
+    SET status = 'applied',
+        project_id = @project_id,
+        updated_at = @updated_at
+    WHERE id = @id
+  `).run({ id: draftId, project_id: savedProjectId, updated_at: nowIso() });
+
+  const draftAssets = draftAssetsForStorage(parseJson(draft.assets_json, []));
+  for (const asset of draftAssets) {
+    await createKnowledgeAsset({
+      project_id: savedProjectId,
+      filename: asset.filename,
+      content_type: asset.content_type,
+      content_base64: asset.content_base64,
+    });
+  }
+
+  const refreshed = getKnowledgeProfile(savedProjectId);
+  return {
+    ok: true,
+    project_id: savedProjectId,
+    profile: refreshed.profile,
+    entries: refreshed.entries,
+    total: refreshed.total,
+    index_status: refreshed.index_status,
+  };
+}
+
 function rejectKnowledgeDraft(draftId) {
   if (!draftId) throw new Error('draftId is required.');
   const result = getDb().prepare(`
@@ -1622,6 +1687,8 @@ async function createKnowledgeDraftStrict(payload = {}, onEvent = null) {
 }
 
 module.exports = {
+  applyDraftDiff,
+  buildDraftDiff,
   confirmKnowledgeDraft,
   createKnowledgeAsset,
   createKnowledgeDraft: createKnowledgeDraftStrict,

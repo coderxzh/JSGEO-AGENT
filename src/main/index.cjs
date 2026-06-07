@@ -660,6 +660,10 @@ function registerHandlers() {
   });
   ipcMain.handle('geo-agent:reject-knowledge-draft', async (_event, draftId) =>
     knowledgeService.rejectKnowledgeDraft(draftId));
+  ipcMain.handle('geo-agent:build-knowledge-diff', async (_event, payload = {}) =>
+    knowledgeService.buildDraftDiff(payload));
+  ipcMain.handle('geo-agent:apply-knowledge-diff', async (_event, payload = {}) =>
+    knowledgeService.applyDraftDiff(payload));
 
   ipcMain.handle('geo-agent:get-conversations', async (_event, payload = {}) =>
     conversationService.listConversations(payload.projectId || payload.project_id || null, payload.limit, {

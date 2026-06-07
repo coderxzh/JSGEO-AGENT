@@ -10,6 +10,7 @@ import {
   Eye,
   FileText,
   Image,
+  Loader2,
   Plus,
   RefreshCw,
   Sparkles,
@@ -103,6 +104,18 @@ type ProfileFieldDefinition = {
 
 const profileFieldDefinitions = PROFILE_FIELD_DEFINITIONS as ProfileFieldDefinition[];
 const profileArrayFields = new Set(PROFILE_ARRAY_FIELDS as ProfileFieldKey[]);
+
+type PendingDiffState = {
+  draftId: string;
+  projectId: string;
+  fileNames: string[];
+  additions: GeoAgentProfileFieldDiff[];
+  conflicts: GeoAgentProfileFieldDiff[];
+  arrayMerges: GeoAgentProfileArrayMerge[];
+  conflictDecisions: Record<string, 'overwrite' | 'skip'>;
+  additionDecisions: Record<string, 'apply' | 'skip'>;
+  arrayMergeDecisions: Record<string, 'apply' | 'skip'>;
+};
 
 const fieldPlaceholders: Partial<Record<ProfileFieldKey, string>> = {
   company_name: '如：成都行乐音改汽车用品有限公司',
@@ -852,12 +865,15 @@ function KnowledgeDetail({
   const [isUploading, setIsUploading] = useState(false);
   const [isReindexing, setIsReindexing] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
   const [detailEntry, setDetailEntry] = useState<GeoAgentKnowledgeEntry | null>(null);
   const [isMarkdownOpen, setIsMarkdownOpen] = useState(false);
   const [isEntriesOpen, setIsEntriesOpen] = useState(false);
   const [retrievalQuery, setRetrievalQuery] = useState('');
   const [retrievalResults, setRetrievalResults] = useState<GeoAgentKnowledgeEntry[]>([]);
   const [isTestingRetrieval, setIsTestingRetrieval] = useState(false);
+  const [pendingDiff, setPendingDiff] = useState<PendingDiffState | null>(null);
+  const [isApplyingDiff, setIsApplyingDiff] = useState(false);
   const uploadInputId = `knowledge-upload-${projectId || 'current'}`;
 
   const handleDocumentUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -866,13 +882,19 @@ function KnowledgeDetail({
     if (!files.length || !projectId) {
       return;
     }
-    if (!window.geoAgent?.createKnowledgeDraft && !window.geoAgent?.createKnowledgeDraftStream) {
+    if (!window.geoAgent?.createKnowledgeDraftStream && !window.geoAgent?.createKnowledgeDraft) {
       setUploadError('桌面端主进程接口尚未刷新，请完全关闭并重新启动 Electron 后再上传。');
+      return;
+    }
+    if (!window.geoAgent?.buildKnowledgeDiff || !window.geoAgent?.applyKnowledgeDiff) {
+      setUploadError('桌面端主进程接口尚未刷新（缺少字段比对接口），请重启 Electron。');
       return;
     }
     setIsUploading(true);
     setUploadError(null);
+    setUploadNotice(null);
     try {
+      const fileNames = files.map((file) => file.name);
       const assets = await Promise.all(files.map(async (file) => ({
         filename: file.name,
         content_type: file.type || null,
@@ -885,37 +907,122 @@ function KnowledgeDetail({
         skill_id: 'knowledge-base-ingest',
         assets,
       };
-      let conversationId: string | null = null;
+      let draft: GeoAgentKnowledgeDraft | undefined;
       if (window.geoAgent.createKnowledgeDraftStream) {
         const finalEvent = await window.geoAgent.createKnowledgeDraftStream(draftPayload, () => undefined);
         if (finalEvent.type === 'error') {
           throw new Error(finalEvent.error || '知识库更新草稿生成失败。');
         }
-        conversationId = finalEvent.conversation_id || finalEvent.draft?.conversation_id || null;
+        draft = finalEvent.draft;
       } else if (window.geoAgent.createKnowledgeDraft) {
-        const draft = await window.geoAgent.createKnowledgeDraft(draftPayload);
-        conversationId = draft.conversation_id || null;
+        draft = await window.geoAgent.createKnowledgeDraft(draftPayload);
       }
-      setUploadError('已生成知识库更新草稿，请在智能助手中确认后写入当前知识库。');
-      window.dispatchEvent(new CustomEvent('geo-agent-open-view', { detail: { view: 'agent' } }));
-      window.setTimeout(() => {
-        if (conversationId) {
-          window.dispatchEvent(new CustomEvent('geo-agent-open-conversation', { detail: { id: conversationId } }));
-          return;
-        }
-        window.dispatchEvent(new CustomEvent('geo-agent-start-knowledge-ingest', {
-          detail: {
-            intent: 'update',
-            projectId,
-            message: `请根据上传附件生成「${enterpriseName}」企业知识库更新草稿。`,
-          },
-        }));
-      }, 80);
+      if (!draft?.id) {
+        throw new Error('草稿生成失败，未返回草稿 ID。');
+      }
+      const diffResult = await window.geoAgent.buildKnowledgeDiff(projectId, draft.id);
+      const { additions, conflicts, arrayMerges } = diffResult.diff;
+      if (additions.length === 0 && conflicts.length === 0 && arrayMerges.length === 0) {
+        setUploadNotice('解析完成，未发现新字段或冲突。原始文档已加入知识库等待索引。');
+        await window.geoAgent.applyKnowledgeDiff({
+          projectId,
+          draftId: draft.id,
+          decisions: { conflicts: {}, additions: {}, arrayMerges: {} },
+        });
+        await onRefresh();
+        return;
+      }
+      setPendingDiff({
+        draftId: draft.id,
+        projectId,
+        fileNames,
+        additions,
+        conflicts,
+        arrayMerges,
+        conflictDecisions: {},
+        additionDecisions: {},
+        arrayMergeDecisions: {},
+      });
     } catch (error) {
       setUploadError(error instanceof Error ? error.message : '文档上传或解析失败。');
     } finally {
       setIsUploading(false);
     }
+  };
+
+  const updateConflictDecision = (key: string, decision: 'overwrite' | 'skip') => {
+    setPendingDiff((prev) => prev ? { ...prev, conflictDecisions: { ...prev.conflictDecisions, [key]: decision } } : prev);
+  };
+
+  const setAllConflictDecisions = (decision: 'overwrite' | 'skip') => {
+    setPendingDiff((prev) => {
+      if (!prev) return prev;
+      const conflictDecisions: Record<string, 'overwrite' | 'skip'> = {};
+      prev.conflicts.forEach((item) => {
+        conflictDecisions[item.key] = decision;
+      });
+      return { ...prev, conflictDecisions };
+    });
+  };
+
+  const toggleAdditionsSkip = (skip: boolean) => {
+    setPendingDiff((prev) => {
+      if (!prev) return prev;
+      const additionDecisions: Record<string, 'apply' | 'skip'> = {};
+      if (skip) {
+        prev.additions.forEach((item) => {
+          additionDecisions[item.key] = 'skip';
+        });
+      }
+      return { ...prev, additionDecisions };
+    });
+  };
+
+  const toggleArrayMergesSkip = (skip: boolean) => {
+    setPendingDiff((prev) => {
+      if (!prev) return prev;
+      const arrayMergeDecisions: Record<string, 'apply' | 'skip'> = {};
+      if (skip) {
+        prev.arrayMerges.forEach((item) => {
+          arrayMergeDecisions[item.key] = 'skip';
+        });
+      }
+      return { ...prev, arrayMergeDecisions };
+    });
+  };
+
+  const handleApplyDiff = async () => {
+    if (!pendingDiff || !window.geoAgent?.applyKnowledgeDiff) return;
+    setIsApplyingDiff(true);
+    setUploadError(null);
+    try {
+      const decisions: GeoAgentKnowledgeDiffDecisions = {
+        conflicts: pendingDiff.conflictDecisions,
+        additions: pendingDiff.additionDecisions,
+        arrayMerges: pendingDiff.arrayMergeDecisions,
+      };
+      await window.geoAgent.applyKnowledgeDiff({
+        projectId: pendingDiff.projectId,
+        draftId: pendingDiff.draftId,
+        decisions,
+      });
+      const appliedAdditions = pendingDiff.additions.filter((item) => pendingDiff.additionDecisions[item.key] !== 'skip').length;
+      const appliedConflicts = pendingDiff.conflicts.filter((item) => pendingDiff.conflictDecisions[item.key] === 'overwrite').length;
+      const appliedArrays = pendingDiff.arrayMerges.filter((item) => pendingDiff.arrayMergeDecisions[item.key] !== 'skip').length;
+      const total = appliedAdditions + appliedConflicts + appliedArrays;
+      setUploadNotice(`已应用 ${total} 个字段更新（新增 ${appliedAdditions} · 合并 ${appliedArrays} · 覆盖 ${appliedConflicts}）。`);
+      setPendingDiff(null);
+      await onRefresh();
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : '应用字段变更失败。');
+    } finally {
+      setIsApplyingDiff(false);
+    }
+  };
+
+  const handleCancelDiff = () => {
+    setPendingDiff(null);
+    setUploadNotice('已取消应用，草稿未写入企业资料。');
   };
 
   const handleRetrievalTest = async () => {
@@ -995,13 +1102,6 @@ function KnowledgeDetail({
             <Edit3 className="h-4 w-4" />
             编辑知识库
           </button>
-          <label
-            className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#f7f7f5] px-5 py-3 text-[13px] font-bold text-primary transition-colors hover:bg-surface-container dark:bg-surface-variant/45"
-            htmlFor={uploadInputId}
-          >
-            <Upload className="h-4 w-4" />
-            上传资料补充
-          </label>
           <button
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#f7f7f5] px-5 py-3 text-[13px] font-bold text-primary transition-colors hover:bg-surface-container dark:bg-surface-variant/45"
             onClick={() => setIsMarkdownOpen(true)}
@@ -1129,12 +1229,16 @@ function KnowledgeDetail({
 
       <section className="grid grid-cols-1 gap-4 lg:grid-cols-[1.2fr_0.8fr]">
         <label className="flex min-h-[150px] cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-outline-variant/50 bg-[#f7f7f5] px-6 py-8 text-center transition-colors hover:border-secondary hover:bg-secondary/5 dark:bg-surface-variant/35">
-          <Upload className="mb-3 h-7 w-7 text-secondary" />
+          {isUploading ? (
+            <Loader2 className="mb-3 h-7 w-7 animate-spin text-secondary" />
+          ) : (
+            <Upload className="mb-3 h-7 w-7 text-secondary" />
+          )}
           <span className="text-[14px] font-bold text-primary">
-            {isUploading ? '正在生成更新草稿...' : '上传 Markdown / PDF / Word 文档'}
+            {isUploading ? '正在解析并比对…' : '上传文档自动同步企业资料'}
           </span>
           <span className="mt-2 max-w-2xl text-[13px] leading-relaxed text-on-surface-variant">
-            文档会先生成知识库更新草稿，确认后再写入当前企业并建立本地 FTS5 全文检索索引。
+            支持 Markdown / PDF / Word。解析后自动与当前企业资料比对：缺失字段直接补充，数组字段合并去重，遇到冲突会弹窗让你选择覆盖或跳过。
           </span>
           <input
             accept=".md,.markdown,.txt,.pdf,.doc,.docx,text/markdown,text/plain,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -1145,7 +1249,8 @@ function KnowledgeDetail({
             onChange={handleDocumentUpload}
             type="file"
           />
-          {uploadError && <span className="mt-3 text-[12px] font-semibold text-secondary">{uploadError}</span>}
+          {uploadError && <span className="mt-3 text-[12px] font-semibold text-red-600">{uploadError}</span>}
+          {!uploadError && uploadNotice && <span className="mt-3 text-[12px] font-semibold text-secondary">{uploadNotice}</span>}
         </label>
 
         <div className="min-w-0 rounded-2xl bg-[#f7f7f5] p-5 dark:bg-surface-variant/45">
@@ -1308,6 +1413,18 @@ function KnowledgeDetail({
       )}
       {detailEntry && (
         <KnowledgeEntryDialog entry={detailEntry} onClose={() => setDetailEntry(null)} />
+      )}
+      {pendingDiff && (
+        <ProfileDiffDialog
+          state={pendingDiff}
+          isApplying={isApplyingDiff}
+          onApply={handleApplyDiff}
+          onCancel={handleCancelDiff}
+          onConflictDecision={updateConflictDecision}
+          onSetAllConflicts={setAllConflictDecisions}
+          onToggleAdditionsSkip={toggleAdditionsSkip}
+          onToggleArrayMergesSkip={toggleArrayMergesSkip}
+        />
       )}
     </div>
   );
@@ -2157,4 +2274,252 @@ function fileToBase64(file: File): Promise<string> {
     };
     reader.readAsDataURL(file);
   });
+}
+
+function diffValueToText(value: GeoAgentProfileFieldValue): string {
+  if (Array.isArray(value)) return value.join('、');
+  if (value === null || value === undefined) return '';
+  return String(value);
+}
+
+function ProfileDiffDialog({
+  state,
+  isApplying,
+  onApply,
+  onCancel,
+  onConflictDecision,
+  onSetAllConflicts,
+  onToggleAdditionsSkip,
+  onToggleArrayMergesSkip,
+}: {
+  state: PendingDiffState;
+  isApplying: boolean;
+  onApply: () => void;
+  onCancel: () => void;
+  onConflictDecision: (key: string, decision: 'overwrite' | 'skip') => void;
+  onSetAllConflicts: (decision: 'overwrite' | 'skip') => void;
+  onToggleAdditionsSkip: (skip: boolean) => void;
+  onToggleArrayMergesSkip: (skip: boolean) => void;
+}) {
+  const conflictsResolved = state.conflicts.every((item) => state.conflictDecisions[item.key]);
+  const additionsSkipped = state.additions.length > 0
+    && state.additions.every((item) => state.additionDecisions[item.key] === 'skip');
+  const arrayMergesSkipped = state.arrayMerges.length > 0
+    && state.arrayMerges.every((item) => state.arrayMergeDecisions[item.key] === 'skip');
+  const summary = `${state.additions.length} 个新字段 · ${state.arrayMerges.length} 个数组合并 · ${state.conflicts.length} 个冲突待决策`;
+
+  return (
+    <div
+      className="fixed inset-0 z-[90] flex animate-in fade-in items-center justify-center bg-black/45 px-4 py-8 duration-200"
+      onClick={isApplying ? undefined : onCancel}
+      role="presentation"
+    >
+      <div
+        className="flex max-h-[90vh] w-full max-w-3xl flex-col animate-in fade-in zoom-in-95 rounded-2xl bg-[#f7f7f5] shadow-2xl duration-200 dark:bg-[#1f1f1f]"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-outline-variant/20 px-6 pt-5 pb-4">
+          <div className="min-w-0">
+            <h2 className="font-heading text-[20px] font-bold text-primary">字段比对结果</h2>
+            <p className="mt-1 truncate text-[12px] text-on-surface-variant">
+              来源：{state.fileNames.join('、') || '上传文档'}
+            </p>
+            <p className="mt-1 text-[13px] font-semibold text-secondary">{summary}</p>
+          </div>
+          <button
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-on-surface-variant transition-colors hover:bg-surface-container hover:text-primary"
+            disabled={isApplying}
+            onClick={onCancel}
+            type="button"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 min-h-0 space-y-5 overflow-y-auto px-6 py-5">
+      {state.additions.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-[14px] font-bold text-primary">新增字段（将自动应用 · {state.additions.length} 项）</h3>
+            <button
+              className="text-[12px] font-bold text-secondary hover:opacity-80"
+              onClick={() => onToggleAdditionsSkip(!additionsSkipped)}
+              type="button"
+            >
+              {additionsSkipped ? '恢复全部应用' : '全部跳过新增'}
+            </button>
+          </div>
+          <div className="mt-3 space-y-2">
+            {state.additions.map((item) => {
+              const skipped = state.additionDecisions[item.key] === 'skip';
+              return (
+                <div
+                  className={`rounded-xl px-4 py-3 text-[13px] ${skipped ? 'bg-white/40 opacity-60' : 'bg-white/70'} dark:bg-[#1f1f1f]`}
+                  key={item.key}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-primary">{item.label}</span>
+                    <span className="rounded-full bg-secondary/12 px-2 py-0.5 text-[11px] font-bold text-secondary">
+                      {item.group}
+                    </span>
+                  </div>
+                  <p className="mt-1 whitespace-pre-wrap leading-relaxed text-on-surface-variant">
+                    {diffValueToText(item.newValue)}
+                  </p>
+                  {item.sourceQuote && (
+                    <p className="mt-2 border-l-2 border-secondary/60 pl-2 text-[12px] text-on-surface-variant/80">
+                      {item.sourceQuote}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {state.arrayMerges.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-[14px] font-bold text-primary">数组字段合并（已去重 · {state.arrayMerges.length} 项）</h3>
+            <button
+              className="text-[12px] font-bold text-secondary hover:opacity-80"
+              onClick={() => onToggleArrayMergesSkip(!arrayMergesSkipped)}
+              type="button"
+            >
+              {arrayMergesSkipped ? '恢复全部应用' : '全部跳过合并'}
+            </button>
+          </div>
+          <div className="mt-3 space-y-2">
+            {state.arrayMerges.map((item) => {
+              const skipped = state.arrayMergeDecisions[item.key] === 'skip';
+              return (
+                <div
+                  className={`rounded-xl px-4 py-3 text-[13px] ${skipped ? 'bg-white/40 opacity-60' : 'bg-white/70'} dark:bg-[#1f1f1f]`}
+                  key={item.key}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-primary">{item.label}</span>
+                    <span className="text-[12px] text-on-surface-variant">
+                      已有 {item.existingItems.length} 项 → 合并后 {item.mergedItems.length} 项
+                    </span>
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {item.addedItems.map((added) => (
+                      <span
+                        className="rounded-full bg-secondary/12 px-2.5 py-1 text-[12px] font-bold text-secondary"
+                        key={added}
+                      >
+                        + {added}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {state.conflicts.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-[14px] font-bold text-primary">冲突字段（请选择 · {state.conflicts.length} 项）</h3>
+            <div className="flex gap-2">
+              <button
+                className="rounded-lg bg-white/70 px-3 py-1.5 text-[12px] font-bold text-primary hover:bg-white dark:bg-[#1f1f1f] dark:hover:bg-surface-container-high"
+                onClick={() => onSetAllConflicts('overwrite')}
+                type="button"
+              >
+                全部覆盖
+              </button>
+              <button
+                className="rounded-lg bg-white/70 px-3 py-1.5 text-[12px] font-bold text-primary hover:bg-white dark:bg-[#1f1f1f] dark:hover:bg-surface-container-high"
+                onClick={() => onSetAllConflicts('skip')}
+                type="button"
+              >
+                全部跳过
+              </button>
+            </div>
+          </div>
+          <div className="mt-3 space-y-3">
+            {state.conflicts.map((item) => {
+              const decision = state.conflictDecisions[item.key];
+              return (
+                <div className="rounded-xl bg-white/70 px-4 py-3 dark:bg-[#1f1f1f]" key={item.key}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-bold text-primary">{item.label}</span>
+                    <span className="rounded-full bg-amber-500/12 px-2 py-0.5 text-[11px] font-bold text-amber-700 dark:text-amber-300">
+                      {item.group}
+                    </span>
+                  </div>
+                  <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div className="rounded-lg bg-white/60 px-3 py-2 text-[12px] dark:bg-surface-variant/45">
+                      <div className="font-bold text-on-surface-variant">原值</div>
+                      <p className="mt-1 whitespace-pre-wrap leading-relaxed text-primary">
+                        {diffValueToText(item.existingValue) || '—'}
+                      </p>
+                    </div>
+                    <div className="rounded-lg bg-secondary/8 px-3 py-2 text-[12px] dark:bg-secondary/20">
+                      <div className="font-bold text-secondary">新值</div>
+                      <p className="mt-1 whitespace-pre-wrap leading-relaxed text-primary">
+                        {diffValueToText(item.newValue) || '—'}
+                      </p>
+                    </div>
+                  </div>
+                  {item.sourceQuote && (
+                    <p className="mt-2 border-l-2 border-secondary/60 pl-2 text-[12px] text-on-surface-variant/80">
+                      {item.sourceQuote}
+                    </p>
+                  )}
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      className={`flex-1 rounded-lg px-3 py-2 text-[12px] font-bold transition-colors ${decision === 'overwrite' ? 'bg-secondary text-on-secondary' : 'bg-white/60 text-primary hover:bg-white dark:bg-surface-variant/45 dark:hover:bg-surface-container-high'}`}
+                      onClick={() => onConflictDecision(item.key, 'overwrite')}
+                      type="button"
+                    >
+                      覆盖
+                    </button>
+                    <button
+                      className={`flex-1 rounded-lg px-3 py-2 text-[12px] font-bold transition-colors ${decision === 'skip' ? 'bg-primary text-on-primary' : 'bg-white/60 text-primary hover:bg-white dark:bg-surface-variant/45 dark:hover:bg-surface-container-high'}`}
+                      onClick={() => onConflictDecision(item.key, 'skip')}
+                      type="button"
+                    >
+                      跳过
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+        </div>
+
+        <div className="flex flex-col gap-3 border-t border-outline-variant/20 px-6 py-4 sm:flex-row sm:items-center sm:justify-end">
+          {!conflictsResolved && state.conflicts.length > 0 && (
+            <span className="text-[12px] text-amber-700 dark:text-amber-300">仍有冲突未决策，请选择覆盖或跳过后再应用。</span>
+          )}
+          <button
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#f7f7f5] px-4 py-2 text-[13px] font-bold text-primary hover:bg-surface-container disabled:opacity-50 dark:bg-surface-variant/45"
+            disabled={isApplying}
+            onClick={onCancel}
+            type="button"
+          >
+            取消
+          </button>
+          <button
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-secondary px-5 py-2 text-[13px] font-bold text-on-secondary transition-opacity hover:opacity-90 disabled:opacity-50"
+            disabled={isApplying || !conflictsResolved}
+            onClick={onApply}
+            type="button"
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            {isApplying ? '应用中…' : '应用变更'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

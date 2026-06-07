@@ -208,6 +208,44 @@ declare global {
     index_status?: GeoAgentKnowledgeIndexStatus | null;
   };
 
+  type GeoAgentProfileFieldDiff = {
+    key: string;
+    label: string;
+    group: string;
+    isArray: boolean;
+    existingValue: GeoAgentProfileFieldValue;
+    newValue: GeoAgentProfileFieldValue;
+    sourceQuote?: string | null;
+    confidence?: number;
+  };
+
+  type GeoAgentProfileArrayMerge = {
+    key: string;
+    label: string;
+    existingItems: string[];
+    addedItems: string[];
+    mergedItems: string[];
+    sourceQuote?: string | null;
+    confidence?: number;
+  };
+
+  type GeoAgentKnowledgeDiffResult = {
+    projectId: string;
+    draftId: string;
+    diff: {
+      additions: GeoAgentProfileFieldDiff[];
+      conflicts: GeoAgentProfileFieldDiff[];
+      arrayMerges: GeoAgentProfileArrayMerge[];
+      unchanged: string[];
+    };
+  };
+
+  type GeoAgentKnowledgeDiffDecisions = {
+    conflicts: Record<string, 'overwrite' | 'skip'>;
+    additions?: Record<string, 'apply' | 'skip'>;
+    arrayMerges?: Record<string, 'apply' | 'skip'>;
+  };
+
   type GeoAgentSkill = {
     id: string;
     name: string;
@@ -914,6 +952,12 @@ declare global {
         draft?: GeoAgentKnowledgeDraft | null
       ) => Promise<GeoAgentKnowledgeDraftConfirmResponse>;
       rejectKnowledgeDraft: (draftId: string) => Promise<{ ok: boolean }>;
+      buildKnowledgeDiff: (projectId: string, draftId: string) => Promise<GeoAgentKnowledgeDiffResult>;
+      applyKnowledgeDiff: (payload: {
+        projectId: string;
+        draftId: string;
+        decisions: GeoAgentKnowledgeDiffDecisions;
+      }) => Promise<GeoAgentKnowledgeDraftConfirmResponse>;
       reindexKnowledge: (projectId: string) => Promise<GeoAgentKnowledgeIndexStatus>;
       getKnowledgeIndexStatus: (projectId?: string | null) => Promise<GeoAgentKnowledgeIndexStatus>;
       getSkills: () => Promise<{ skills: GeoAgentSkill[] }>;
