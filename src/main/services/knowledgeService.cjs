@@ -235,6 +235,24 @@ function ensureVectorTable(db) {
   try {
     const sqliteVec = require('sqlite-vec');
     sqliteVec.load(db);
+
+    // 检查现有表的维度是否匹配
+    try {
+      const tableInfo = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`).get(VECTOR_TABLE_NAME);
+      if (tableInfo?.sql) {
+        const dimensionMatch = tableInfo.sql.match(/float\[(\d+)\]/);
+        if (dimensionMatch) {
+          const currentDimensions = Number(dimensionMatch[1]);
+          if (currentDimensions !== config.dimensions) {
+            console.log(`[Vector] 维度不匹配：当前 ${currentDimensions}，需要 ${config.dimensions}，重建表`);
+            db.exec(`DROP TABLE IF EXISTS ${VECTOR_TABLE_NAME}`);
+          }
+        }
+      }
+    } catch (e) {
+      // 忽略检查错误，继续创建表
+    }
+
     db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS ${VECTOR_TABLE_NAME} USING vec0(chunk_id TEXT PRIMARY KEY, embedding float[${config.dimensions}])`);
     vectorLoadState = { checked: true, ready: true, error: null };
     return true;
