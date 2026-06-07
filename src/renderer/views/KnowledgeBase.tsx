@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ArrowLeft,
   AlertCircle,
@@ -495,7 +496,7 @@ export function KnowledgeBase() {
           setTotal={setKnowledgeTotal}
           total={knowledgeTotal}
         />
-        {deleteTarget && (
+        {deleteTarget && createPortal(
           <DeleteProfileDialog
             confirmation={deleteConfirmation}
             isDeleting={isDeleting}
@@ -506,7 +507,8 @@ export function KnowledgeBase() {
             onChange={setDeleteConfirmation}
             onDelete={handleDeleteProfile}
             profile={deleteTarget}
-          />
+          />,
+          document.body
         )}
       </>
     );
@@ -609,7 +611,7 @@ export function KnowledgeBase() {
         </div>
       )}
 
-      {deleteTarget && (
+      {deleteTarget && createPortal(
         <DeleteProfileDialog
           confirmation={deleteConfirmation}
           isDeleting={isDeleting}
@@ -620,7 +622,8 @@ export function KnowledgeBase() {
           onChange={setDeleteConfirmation}
           onDelete={handleDeleteProfile}
           profile={deleteTarget}
-        />
+        />,
+        document.body
       )}
     </div>
   );
@@ -861,6 +864,7 @@ function KnowledgeDetail({
   const healthReport = buildKnowledgeHealthReport(profile, entries, indexStatus);
   const geoStages = buildGeoStagesFromWorkflow(geoWorkflowState)
     ?? buildGeoStagesFromProject(geoProject, geoReports, geoQuestionSets, geoSourceDiscoveries, geoArticleDrafts);
+  const currentStage = resolveCurrentStage(geoStages ?? []);
   const initialKeywords = geoProject?.initial_keywords ?? [];
   const [isUploading, setIsUploading] = useState(false);
   const [isReindexing, setIsReindexing] = useState(false);
@@ -869,9 +873,6 @@ function KnowledgeDetail({
   const [detailEntry, setDetailEntry] = useState<GeoAgentKnowledgeEntry | null>(null);
   const [isMarkdownOpen, setIsMarkdownOpen] = useState(false);
   const [isEntriesOpen, setIsEntriesOpen] = useState(false);
-  const [retrievalQuery, setRetrievalQuery] = useState('');
-  const [retrievalResults, setRetrievalResults] = useState<GeoAgentKnowledgeEntry[]>([]);
-  const [isTestingRetrieval, setIsTestingRetrieval] = useState(false);
   const [pendingDiff, setPendingDiff] = useState<PendingDiffState | null>(null);
   const [isApplyingDiff, setIsApplyingDiff] = useState(false);
   const uploadInputId = `knowledge-upload-${projectId || 'current'}`;
@@ -1025,19 +1026,6 @@ function KnowledgeDetail({
     setUploadNotice('已取消应用，草稿未写入企业资料。');
   };
 
-  const handleRetrievalTest = async () => {
-    if (!projectId || !retrievalQuery.trim() || !window.geoAgent?.searchKnowledge) {
-      return;
-    }
-    setIsTestingRetrieval(true);
-    try {
-      const response = await window.geoAgent.searchKnowledge(retrievalQuery, projectId, 6);
-      setRetrievalResults(response.entries || []);
-    } finally {
-      setIsTestingRetrieval(false);
-    }
-  };
-
   const handleReparseAsset = async (assetId: string) => {
     if (!window.geoAgent?.reparseKnowledgeAsset) return;
     onStatusChange(await window.geoAgent.reparseKnowledgeAsset(assetId));
@@ -1163,27 +1151,43 @@ function KnowledgeDetail({
         <div className="rounded-2xl bg-[#f7f7f5] p-5 dark:bg-surface-variant/45">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h2 className="font-heading text-[20px] font-bold text-primary">阶段一输出</h2>
+              <h2 className="font-heading text-[20px] font-bold text-primary">GEO 阶段状态</h2>
               <p className="mt-1 text-[13px] leading-relaxed text-on-surface-variant">
                 这里读取 GEO 项目状态层，不会写回企业事实知识库。
               </p>
             </div>
-            <span className={`shrink-0 rounded-full px-3 py-1 text-[11px] font-bold ${geoProject?.knowledge_base_ready ? 'bg-secondary/12 text-secondary' : 'bg-amber-500/12 text-amber-700 dark:text-amber-300'}`}>
-              {geoProject?.knowledge_base_ready ? '可启动阶段二' : '继续采集'}
-            </span>
+            {currentStage.allDone ? (
+              <span className="shrink-0 rounded-full bg-secondary/12 px-3 py-1 text-[11px] font-bold text-secondary">
+                全流程已完成
+              </span>
+            ) : currentStage.stage.status === '进行中' ? (
+              <span className="shrink-0 rounded-full bg-secondary/12 px-3 py-1 text-[11px] font-bold text-secondary">
+                进行中
+              </span>
+            ) : currentStage.canAdvance ? (
+              <span className="shrink-0 rounded-full bg-secondary/12 px-3 py-1 text-[11px] font-bold text-secondary">
+                可启动阶段 {currentStage.index + 1}
+              </span>
+            ) : currentStage.stage.status === '待重试' ? (
+              <span className="shrink-0 rounded-full bg-red-500/12 px-3 py-1 text-[11px] font-bold text-red-600 dark:text-red-300">
+                {currentStage.stage.status}
+              </span>
+            ) : (
+              <span className="shrink-0 rounded-full bg-amber-500/12 px-3 py-1 text-[11px] font-bold text-amber-700 dark:text-amber-300">
+                {currentStage.stage.status}
+              </span>
+            )}
           </div>
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="rounded-xl bg-white/60 p-4 dark:bg-[#1f1f1f]">
               <span className="text-[11px] font-bold uppercase tracking-widest text-on-surface-variant/70">Current Phase</span>
               <p className="mt-2 text-[15px] font-bold text-primary">
-                {formatCurrentPhase(geoProject?.current_phase)}
+                {currentStage.stage.label}
               </p>
               <p className="mt-1 text-[12px] leading-relaxed text-on-surface-variant">
-                {geoProject?.current_phase === 'ready_for_check'
-                  ? '知识库已具备基础资料和可检索索引，下一步可构建 AI 核心问题池。'
-                  : '继续补充企业资料、附件和索引状态，避免后续自查缺少事实依据。'}
+                {currentStage.stage.description}
               </p>
-              {geoProject?.current_phase === 'ready_for_check' && (
+              {currentStage.index === 1 && currentStage.stage.status === '可用' && (
                 <button
                   className="mt-3 inline-flex items-center gap-2 rounded-xl bg-secondary px-3 py-2 text-[12px] font-bold text-on-secondary transition-opacity hover:opacity-90"
                   onClick={startPhaseTwo}
@@ -1253,7 +1257,7 @@ function KnowledgeDetail({
           {!uploadError && uploadNotice && <span className="mt-3 text-[12px] font-semibold text-secondary">{uploadNotice}</span>}
         </label>
 
-        <div className="min-w-0 rounded-2xl bg-[#f7f7f5] p-5 dark:bg-surface-variant/45">
+        <div className="flex min-w-0 max-h-[480px] flex-col rounded-2xl bg-[#f7f7f5] p-5 dark:bg-surface-variant/45">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <h2 className="font-heading text-[18px] font-bold text-primary">本地 RAG 索引</h2>
@@ -1279,8 +1283,8 @@ function KnowledgeDetail({
             <Metric label="失败" value={`${indexStatus?.failed ?? 0}`} />
           </div>
           {indexStatus?.assets && indexStatus.assets.length > 0 && (
-            <div className="mt-4 space-y-2">
-              {indexStatus.assets.slice(0, 4).map((asset) => (
+            <div className="mt-4 flex-1 min-h-0 space-y-2 overflow-y-auto pr-1">
+              {indexStatus.assets.map((asset) => (
                 <div className="rounded-xl bg-white/55 px-3 py-2 text-[12px] dark:bg-[#1f1f1f]" key={asset.id}>
                   <div className="flex items-center justify-between gap-3">
                     <span className="min-w-0 truncate font-semibold text-primary">{asset.filename}</span>
@@ -1303,45 +1307,6 @@ function KnowledgeDetail({
               ))}
             </div>
           )}
-          <div className="mt-4 rounded-xl bg-white/55 p-3 dark:bg-[#1f1f1f]">
-            <div className="flex gap-2">
-              <input
-                className="min-w-0 flex-1 rounded-lg border border-outline-variant/40 bg-white px-3 py-2 text-[12px] text-primary outline-none focus:border-secondary dark:bg-surface"
-                onChange={(event) => setRetrievalQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') handleRetrievalTest();
-                }}
-                placeholder="输入一句问题测试混合检索"
-                value={retrievalQuery}
-              />
-              <button
-                className="shrink-0 rounded-lg bg-primary px-3 py-2 text-[12px] font-bold text-on-primary disabled:opacity-50"
-                disabled={isTestingRetrieval || !retrievalQuery.trim()}
-                onClick={handleRetrievalTest}
-                type="button"
-              >
-                {isTestingRetrieval ? '检索中' : '测试'}
-              </button>
-            </div>
-            {retrievalResults.length > 0 && (
-              <div className="mt-3 space-y-2">
-                {retrievalResults.map((entry) => (
-                  <button
-                    className="block w-full rounded-lg bg-white/70 p-2 text-left text-[12px] hover:bg-white dark:bg-surface-variant/45"
-                    key={entry.id}
-                    onClick={() => setDetailEntry(entry)}
-                    type="button"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="min-w-0 truncate font-bold text-primary">{entry.source_filename || entry.title}</span>
-                      <span className="shrink-0 text-secondary">{entry.retrieval_source || 'fts'} {entry.score ? entry.score.toFixed(2) : ''}</span>
-                    </div>
-                    <p className="mt-1 line-clamp-2 text-on-surface-variant">{entry.content}</p>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
       </section>
 
@@ -1401,20 +1366,23 @@ function KnowledgeDetail({
         </div>
       </div>
 
-      {isMarkdownOpen && profile && (
-        <MarkdownProfileDialog markdown={buildProfileMarkdown(profile)} onClose={() => setIsMarkdownOpen(false)} title={`${enterpriseName} Markdown 企业档案`} />
+      {isMarkdownOpen && profile && createPortal(
+        <MarkdownProfileDialog markdown={buildProfileMarkdown(profile)} onClose={() => setIsMarkdownOpen(false)} title={`${enterpriseName} Markdown 企业档案`} />,
+        document.body
       )}
-      {isEntriesOpen && (
+      {isEntriesOpen && createPortal(
         <KnowledgeEntriesDialog
           entries={entries}
           onClose={() => setIsEntriesOpen(false)}
           onSelectEntry={setDetailEntry}
-        />
+        />,
+        document.body
       )}
-      {detailEntry && (
-        <KnowledgeEntryDialog entry={detailEntry} onClose={() => setDetailEntry(null)} />
+      {detailEntry && createPortal(
+        <KnowledgeEntryDialog entry={detailEntry} onClose={() => setDetailEntry(null)} />,
+        document.body
       )}
-      {pendingDiff && (
+      {pendingDiff && createPortal(
         <ProfileDiffDialog
           state={pendingDiff}
           isApplying={isApplyingDiff}
@@ -1424,7 +1392,8 @@ function KnowledgeDetail({
           onSetAllConflicts={setAllConflictDecisions}
           onToggleAdditionsSkip={toggleAdditionsSkip}
           onToggleArrayMergesSkip={toggleArrayMergesSkip}
-        />
+        />,
+        document.body
       )}
     </div>
   );
@@ -1611,7 +1580,7 @@ function KnowledgeEntriesDialog({
 }) {
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/35 px-4 py-8" onClick={onClose} role="presentation">
-      <div className="flex max-h-[86vh] w-full max-w-5xl flex-col rounded-2xl bg-white p-5 shadow-2xl dark:bg-[#1f1f1f]" onClick={(event) => event.stopPropagation()}>
+      <div className="flex max-h-[86vh] w-full max-w-4xl flex-col rounded-2xl bg-white p-5 shadow-2xl dark:bg-[#1f1f1f]" onClick={(event) => event.stopPropagation()}>
         <div className="flex items-start justify-between gap-4 border-b border-outline-variant/20 pb-4">
           <div>
             <h2 className="font-heading text-[20px] font-bold text-primary">原始知识条目</h2>
@@ -2059,6 +2028,38 @@ function combineGeoStageStatuses(statuses: GeoStageStatus['status'][]): GeoStage
   if (statuses.includes('待重试') || statuses.includes('已暂缓')) return '待重试';
   if (statuses.includes('待启动')) return '待启动';
   return '待开发';
+}
+
+function resolveCurrentStage(stages: GeoStageStatus[]): {
+  index: number;
+  stage: GeoStageStatus;
+  canAdvance: boolean;
+  allDone: boolean;
+} {
+  if (!stages || stages.length === 0) {
+    return {
+      index: 1,
+      stage: { label: '阶段一：企业知识库构建', status: '待启动', description: '' },
+      canAdvance: false,
+      allDone: false,
+    };
+  }
+  for (let i = stages.length - 1; i >= 0; i--) {
+    if (stages[i].status === '进行中') {
+      return { index: i + 1, stage: stages[i], canAdvance: false, allDone: false };
+    }
+  }
+  for (let i = stages.length - 1; i >= 0; i--) {
+    if (stages[i].status === '可用') {
+      return {
+        index: i + 1,
+        stage: stages[i],
+        canAdvance: i + 1 < stages.length,
+        allDone: i + 1 === stages.length,
+      };
+    }
+  }
+  return { index: 1, stage: stages[0], canAdvance: false, allDone: false };
 }
 
 function mapWorkflowStatus(status: string): GeoStageStatus['status'] {
