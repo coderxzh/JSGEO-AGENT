@@ -86,26 +86,33 @@ function flatten(value, separator = '') {
   return String(value ?? '');
 }
 
+function flattenPayload(value) {
+  // 严格遵循超级媒介 API 文档的 flatten 函数实现
+  // 参考 PHP 实现：array_is_list → sort；字典 → ksort
+  if (Array.isArray(value)) {
+    return [...value]
+      .sort((a, b) => String(a).localeCompare(String(b)))
+      .map((item) => (item && typeof item === 'object' ? flattenPayload(item) : String(item ?? '')))
+      .join('');
+  }
+  if (value && typeof value === 'object') {
+    return Object.keys(value)
+      .filter((key) => key !== 'signature')
+      .sort()
+      .map((key) => {
+        const item = value[key];
+        const nextValue = item && typeof item === 'object' ? flattenPayload(item) : String(item ?? '');
+        return `${key}=${nextValue}`;
+      })
+      .join('');
+  }
+  return String(value ?? '');
+}
+
 function signPayload(payload, secret) {
-  // 超级媒介 API 签名算法：HMAC-SHA256(secret, sorted_key_value_string)
-  // 所有参数按 key 字母排序，拼接为 key1=value1key2=value2... 格式（无分隔符）
-  // 注意：需要跳过 undefined、null 和空字符串值，与 encodeQuery 行为保持一致
-  // 对于数组参数，需要展开为 key%5B%5D=value1&key%5B%5D=value2 格式（与 URL 编码格式一致）
-  const stringToSign = Object.keys(payload)
-    .filter((key) => key !== 'signature' && payload[key] != null && payload[key] !== '')
-    .sort()
-    .flatMap((key) => {
-      const value = payload[key];
-      if (Array.isArray(value)) {
-        // 数组参数：展开为 key%5B%5D=value1&key%5B%5D=value2 格式
-        return value.map((item, index) => {
-          const separator = index > 0 ? '&' : '';
-          return `${separator}${key}%5B%5D=${item}`;
-        });
-      }
-      return [`${key}=${value}`];
-    })
-    .join('');
+  // 超级媒介 API 签名算法：HMAC-SHA256(secret, flatten(data))
+  // flatten 函数严格遵循 API 文档的 PHP 参考实现
+  const stringToSign = flattenPayload(payload);
 
   // 调试日志：输出签名字符串
   console.log('[chaojimeijie] 签名字符串:', stringToSign);
@@ -127,32 +134,35 @@ function withAuth(params = {}) {
 }
 
 function encodeQuery(params) {
-  const query = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === '') {
-      return;
-    }
-    if (Array.isArray(value)) {
-      value.forEach((item) => query.append(`${key}[]`, String(item)));
-      return;
-    }
-    query.append(key, String(value));
-  });
-  return query.toString();
+  // 手动构建查询字符串，不使用 URLSearchParams 以避免对 [] 的自动编码
+  // 签名算法基于 sn[]=value 格式计算，查询字符串必须保持一致
+  const parts = [];
+  Object.entries(params)
+    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .forEach(([key, value]) => {
+      if (Array.isArray(value)) {
+        value.forEach((item) => parts.push(`${key}[]=${item}`));
+      } else {
+        parts.push(`${key}=${value}`);
+      }
+    });
+  return parts.join('&');
 }
 
 function encodeBody(params) {
-  // 对于 POST 请求，手动拼接请求体，不使用 URL 编码
-  // 因为签名是基于原始值计算的，URL 编码会导致签名不匹配
-  return Object.entries(params)
+  // POST 请求体使用 x-www-form-urlencoded 格式
+  // 数组参数保持 sn[]=value 格式，与签名计算一致
+  const parts = [];
+  Object.entries(params)
     .filter(([, value]) => value !== undefined && value !== null && value !== '')
-    .map(([key, value]) => {
+    .forEach(([key, value]) => {
       if (Array.isArray(value)) {
-        return value.map((item) => `${key}[]=${item}`).join('&');
+        value.forEach((item) => parts.push(`${key}[]=${item}`));
+      } else {
+        parts.push(`${key}=${value}`);
       }
-      return `${key}=${value}`;
-    })
-    .join('&');
+    });
+  return parts.join('&');
 }
 
 async function request(resourceType, action, params = {}, method = 'GET') {

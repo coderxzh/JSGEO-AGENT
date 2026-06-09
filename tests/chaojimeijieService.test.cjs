@@ -14,9 +14,9 @@ test('signPayload uses HMAC-SHA256 with all params sorted by key', () => {
     null_param: null,
     empty_param: '',
   };
-  // 超级媒介 API 签名格式：HMAC-SHA256(secret, sorted_key_value_string)
-  // 按 key 字母排序，跳过 undefined、null 和空字符串
-  const stringToSign = 'algorithm=sha256appid=test-app-idother_param=valuetimestamp=1234567890';
+  // 超级媒介 API 签名格式：HMAC-SHA256(secret, flatten(data))
+  // 严格遵循 PHP 参考实现：不过滤 null/空值，null → "null"，undefined → ""
+  const stringToSign = 'algorithm=sha256appid=test-app-idempty_param=null_param=other_param=valuetimestamp=1234567890undefined_param=';
   const expected = crypto.createHmac('sha256', 'secret').update(stringToSign).digest('hex');
   assert.equal(signPayload(payload, 'secret'), expected);
 });
