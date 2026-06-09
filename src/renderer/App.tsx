@@ -17,6 +17,9 @@ import { ViewState } from './types';
 import { EnterpriseProvider } from './context/EnterpriseContext';
 import { motion } from 'motion/react';
 import { GlobalConfirmDialog } from './components/ConfirmDialog';
+import { GlobalInputDialog } from './components/InputDialog';
+import { ErrorBoundary } from './components/ErrorBoundary.jsx';
+import { ErrorToastProvider } from './components/ErrorToast';
 
 export default function App() {
   const [currentView, setCurrentView] = useState<ViewState>('dashboard');
@@ -43,25 +46,30 @@ export default function App() {
   ] as const, []);
 
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden">
-      <EnterpriseProvider>
-        <TitleBar />
-        <Layout currentView={currentView} onViewChange={setCurrentView}>
-          {views.map(([view, element]) => (
-            <motion.div
-              animate={{ opacity: currentView === view ? 1 : 0, y: currentView === view ? 0 : 12 }}
-              className={currentView === view ? 'h-full w-full' : 'hidden'}
-              initial={false}
-              key={view}
-              transition={{ duration: 0.18, ease: 'easeOut' }}
-            >
-              {element}
-            </motion.div>
-          ))}
-        </Layout>
-        <GlobalConfirmDialog />
-      </EnterpriseProvider>
-    </div>
+    <ErrorToastProvider>
+      <ErrorBoundary>
+        <div className="h-screen w-screen flex flex-col overflow-hidden">
+          <EnterpriseProvider>
+            <TitleBar />
+            <Layout currentView={currentView} onViewChange={setCurrentView}>
+              {views.map(([view, element]) => (
+                <motion.div
+                  animate={{ opacity: currentView === view ? 1 : 0, y: currentView === view ? 0 : 12 }}
+                  className={currentView === view ? 'h-full w-full' : 'hidden'}
+                  initial={false}
+                  key={view}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                >
+                  {element}
+                </motion.div>
+              ))}
+            </Layout>
+            <GlobalConfirmDialog />
+            <GlobalInputDialog />
+          </EnterpriseProvider>
+        </div>
+      </ErrorBoundary>
+    </ErrorToastProvider>
   );
 }
 

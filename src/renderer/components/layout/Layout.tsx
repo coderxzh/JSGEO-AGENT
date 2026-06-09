@@ -32,7 +32,7 @@ export function Layout({ currentView, onViewChange, children }: LayoutProps) {
       {/* Dim overlay/backdrop for mobile and tight screens when sidebar is expanded */}
       {!isCollapsed && (
         <div
-          className="fixed inset-0 bg-black/35 z-40 lg:hidden cursor-pointer animate-in fade-in duration-200"
+          className="fixed inset-0 bg-black/35 z-[45] lg:hidden cursor-pointer animate-in fade-in duration-200"
           onClick={() => setIsCollapsed(true)}
           title="点击关闭菜单"
         />

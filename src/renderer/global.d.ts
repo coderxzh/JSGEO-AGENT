@@ -820,6 +820,26 @@ declare global {
         publishType?: 1 | 2 | 3;
         accountRule?: 2 | 3;
       }) => Promise<GeoAgentGeoArticleDraft>;
+      autoPublishArticles: (projectId: string, options?: {
+        articleRole?: 'support' | 'ranking';
+        maxArticles?: number;
+        dryRun?: boolean;
+      }) => Promise<{
+        projectId: string;
+        total: number;
+        published: number;
+        skipped: number;
+        failed: number;
+        results: Array<{
+          draftId: string;
+          title?: string;
+          status: 'published' | 'skipped' | 'failed' | 'dry_run';
+          orderId?: string;
+          resource?: { id: string; name: string; price: number };
+          reason?: string;
+          error?: string;
+        }>;
+      }>;
       syncPublishOrder: (articleId: string) => Promise<GeoAgentGeoArticleDraft>;
       syncPublishOrders: (projectId: string) => Promise<{ project_id: string; drafts: GeoAgentGeoArticleDraft[] }>;
       managePublishOrder: (articleId: string, action: 'urge' | 'cancel' | 'apply-refund' | 'apply-republish', payload?: { reason?: string; remark?: string }) => Promise<GeoAgentGeoArticleDraft>;

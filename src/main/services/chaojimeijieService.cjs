@@ -1,5 +1,6 @@
 const crypto = require('node:crypto');
 const { getDb } = require('./databaseService.cjs');
+const { fetchWithRetry, sanitizeErrorMessage } = require('./apiClient.cjs');
 
 const PROVIDER = 'chaojimeijie';
 const API_BASE_URL = 'https://vip.chaojimeijie.com/api';
@@ -89,11 +90,26 @@ function signPayload(payload, secret) {
   // 超级媒介 API 签名算法：HMAC-SHA256(secret, sorted_key_value_string)
   // 所有参数按 key 字母排序，拼接为 key1=value1key2=value2... 格式（无分隔符）
   // 注意：需要跳过 undefined、null 和空字符串值，与 encodeQuery 行为保持一致
+  // 对于数组参数，需要展开为 key%5B%5D=value1&key%5B%5D=value2 格式（与 URL 编码格式一致）
   const stringToSign = Object.keys(payload)
     .filter((key) => key !== 'signature' && payload[key] != null && payload[key] !== '')
     .sort()
-    .map((key) => `${key}=${payload[key]}`)
+    .flatMap((key) => {
+      const value = payload[key];
+      if (Array.isArray(value)) {
+        // 数组参数：展开为 key%5B%5D=value1&key%5B%5D=value2 格式
+        return value.map((item, index) => {
+          const separator = index > 0 ? '&' : '';
+          return `${separator}${key}%5B%5D=${item}`;
+        });
+      }
+      return [`${key}=${value}`];
+    })
     .join('');
+
+  // 调试日志：输出签名字符串
+  console.log('[chaojimeijie] 签名字符串:', stringToSign);
+
   return crypto.createHmac('sha256', secret).update(stringToSign).digest('hex');
 }
 
@@ -153,7 +169,10 @@ async function request(resourceType, action, params = {}, method = 'GET') {
     init.body = encodeBody(payload);
   }
 
-  const response = await fetch(url, init);
+  const response = await fetchWithRetry(url, init, {
+    timeout: 15000,
+    maxRetries: 2,
+  });
   const responseText = await response.text();
   let json;
   try {
@@ -162,6 +181,14 @@ async function request(resourceType, action, params = {}, method = 'GET') {
     throw new Error(`超级媒介响应不是 JSON：${responseText.slice(0, 200)}`);
   }
   if (!response.ok || Number(json.code) !== 200) {
+    // 调试日志：输出请求URL、签名字符串和响应
+    console.error('[chaojimeijie] 请求失败:', {
+      url: url.toString(),
+      method,
+      responseStatus: response.status,
+      responseCode: json.code,
+      responseMessage: json.message,
+    });
     throw new Error(json.message || `超级媒介请求失败：${response.status}`);
   }
   return json.data;

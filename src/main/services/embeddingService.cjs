@@ -1,3 +1,5 @@
+const { fetchWithRetry, sanitizeErrorMessage } = require('./apiClient.cjs');
+
 function normalizeBaseUrl(value) {
   return String(value || '').replace(/\/+$/, '');
 }
@@ -39,7 +41,7 @@ async function embedBatch(texts = []) {
   const results = [];
   for (const text of texts) {
     const input = [{ type: 'text', text: String(text || '') }];
-    const response = await fetch(`${config.baseUrl}/embeddings/multimodal`, {
+    const response = await fetchWithRetry(`${config.baseUrl}/embeddings/multimodal`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${config.apiKey}`,
@@ -50,13 +52,16 @@ async function embedBatch(texts = []) {
         encoding_format: 'float',
         input,
       }),
+    }, {
+      timeout: 30000,
+      maxRetries: 2,
     });
 
     const responseText = await response.text().catch(() => '');
     console.log('[Embedding] 响应状态:', response.status);
 
     if (!response.ok) {
-      throw new Error(`Embedding request failed: ${response.status} ${responseText.slice(0, 300)}`);
+      throw new Error(`Embedding request failed: ${response.status} ${sanitizeErrorMessage(responseText.slice(0, 300))}`);
     }
 
     const data = JSON.parse(responseText);

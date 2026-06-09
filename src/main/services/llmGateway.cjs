@@ -1,4 +1,5 @@
 const { API_FAMILIES, NETWORK_MODES } = require('./modelPolicyService.cjs');
+const { fetchWithRetry, sanitizeErrorMessage } = require('./apiClient.cjs');
 
 function cleanBaseUrl(value) {
   return String(value || '').replace(/\/+$/, '');
@@ -160,13 +161,16 @@ async function chatCompletion({
     requestBody.response_format = { type: 'json_object' };
   }
 
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
+  const response = await fetchWithRetry(`${config.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(requestBody),
+  }, {
+    timeout: 60000,
+    maxRetries: 2,
   });
 
   if (!response.ok) {
@@ -182,7 +186,7 @@ async function chatCompletion({
         forceNoResponseFormat: true,
       });
     }
-    throw new Error(`模型调用失败：HTTP ${response.status}${body ? ` ${body.slice(0, 300)}` : ''}`);
+    throw new Error(`模型调用失败：HTTP ${response.status}${body ? ` ${sanitizeErrorMessage(body.slice(0, 300))}` : ''}`);
   }
 
   const result = await response.json();
@@ -234,13 +238,16 @@ async function chatCompletionStream({
     can_proceed: false,
   });
 
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
+  const response = await fetchWithRetry(`${config.baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${config.apiKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(requestBody),
+  }, {
+    timeout: 60000,
+    maxRetries: 2,
   });
 
   onEvent?.({
@@ -477,15 +484,18 @@ async function responsesCompletion({
 
   applyNetworkTool(body, resolvedNetworkMode);
 
-  const response = await fetch(`${config.baseUrl}/responses`, {
+  const response = await fetchWithRetry(`${config.baseUrl}/responses`, {
     method: 'POST',
     headers: buildResponsesHeaders(config, resolvedNetworkMode),
     body: JSON.stringify(body),
+  }, {
+    timeout: 60000,
+    maxRetries: 2,
   });
 
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new Error(`Responses API 调用失败：HTTP ${response.status}${text ? ` ${text.slice(0, 300)}` : ''}`);
+    throw new Error(`Responses API 调用失败：HTTP ${response.status}${text ? ` ${sanitizeErrorMessage(text.slice(0, 300))}` : ''}`);
   }
 
   return {
@@ -595,10 +605,13 @@ async function responsesStream({
     can_proceed: false,
   });
 
-  const response = await fetch(`${config.baseUrl}/responses`, {
+  const response = await fetchWithRetry(`${config.baseUrl}/responses`, {
     method: 'POST',
     headers: buildResponsesHeaders(config, resolvedNetworkMode),
     body: JSON.stringify(body),
+  }, {
+    timeout: 60000,
+    maxRetries: 2,
   });
 
   onEvent?.({

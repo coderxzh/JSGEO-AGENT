@@ -37,15 +37,15 @@ export function ConfirmDialog({
   const variantStyles = {
     danger: {
       icon: 'text-error',
-      button: 'bg-error text-white hover:bg-error/90',
+      button: 'bg-error text-on-error hover:bg-error/90',
     },
     warning: {
       icon: 'text-amber-500',
       button: 'bg-amber-500 text-white hover:bg-amber-600',
     },
     info: {
-      icon: 'text-primary',
-      button: 'bg-primary text-white hover:bg-primary/90',
+      icon: 'text-secondary',
+      button: 'bg-secondary text-on-secondary hover:bg-secondary/90',
     },
   };
 
@@ -53,20 +53,20 @@ export function ConfirmDialog({
 
   const dialog = (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50">
-      <div className="relative w-full max-w-[400px] rounded-2xl bg-white p-6 shadow-xl">
+      <div className="relative w-full max-w-[400px] rounded-2xl bg-surface p-6 shadow-xl">
         <div className="flex items-start gap-4">
           <div className={`flex-shrink-0 ${styles.icon}`}>
             <AlertTriangle className="size-6" />
           </div>
           <div className="flex-1">
-            <h3 className="text-lg font-bold text-on-surface">{title}</h3>
+            <h3 className="text-lg font-bold text-primary">{title}</h3>
             <p className="mt-2 text-sm text-on-surface-variant leading-relaxed">{message}</p>
           </div>
         </div>
         <div className="mt-6 flex justify-end gap-3">
           <button
             onClick={onCancel}
-            className="rounded-xl border border-outline-variant bg-white px-4 py-2 text-sm font-medium text-on-surface-variant transition-colors hover:bg-surface-container"
+            className="rounded-xl border border-outline-variant bg-surface px-4 py-2 text-sm font-medium text-on-surface-variant transition-colors hover:bg-surface-container"
           >
             {cancelLabel}
           </button>

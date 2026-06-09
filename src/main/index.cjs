@@ -1467,6 +1467,11 @@ function registerHandlers() {
     return articlePublishService.publishArticle(articleId, adapterId, options);
   });
 
+  ipcMain.handle('geo-agent:auto-publish-articles', async (_event, projectId, options = {}) => {
+    const autoPublishService = require('./services/autoPublishService.cjs');
+    return autoPublishService.autoPublishArticles(projectId, options);
+  });
+
   ipcMain.handle('geo-agent:sync-publish-order', async (_event, articleId) => {
     return articlePublishService.syncPublishOrder(articleId);
   });
@@ -1565,6 +1570,15 @@ function initializeDatabaseForCurrentUser() {
 ensureWritableUserDataPath();
 loadEnvFile();
 registerHandlers();
+
+// 全局异常处理
+process.on('uncaughtException', (error) => {
+  console.error('[主进程] 未捕获的异常:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[主进程] 未处理的 Promise rejection:', reason);
+});
 
 app.whenReady().then(async () => {
   initializeDatabaseForCurrentUser();

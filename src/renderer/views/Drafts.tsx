@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Ban, Bell, CheckCircle2, CircleDollarSign, ExternalLink, FileText, Filter, Loader2, PenLine, RefreshCw, RotateCcw, Search, Send, Shield, Sparkles, Trash2, Trophy, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { AlertTriangle, Ban, Bell, CheckCircle2, CircleDollarSign, ExternalLink, FileText, Filter, Loader2, PenLine, RefreshCw, RotateCcw, Search, Send, Shield, Sparkles, Trash2, Trophy, X, Zap } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useEnterprise } from '../context/EnterpriseContext';
 import { PreviewDialog } from '../components/PreviewDialog';
 import { showConfirm } from '../components/ConfirmDialog';
+import { showInputDialog } from '../components/InputDialog';
 
 type StatusFilter = 'all' | 'draft' | 'reviewed' | 'publishing' | 'published' | 'failed';
 type RoleFilter = 'all' | 'support' | 'ranking';
@@ -69,10 +71,26 @@ export function Drafts() {
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [selectedDraft, setSelectedDraft] = useState<GeoAgentGeoArticleDraft | null>(null);
   const [selectedDraftIntent, setSelectedDraftIntent] = useState<'edit' | 'ai'>('edit');
   const [resourceDraft, setResourceDraft] = useState<GeoAgentGeoArticleDraft | null>(null);
   const [isSyncingOrders, setIsSyncingOrders] = useState(false);
+  const [isAutoPublishing, setIsAutoPublishing] = useState(false);
+  const [autoPublishResult, setAutoPublishResult] = useState<{
+    total: number;
+    published: number;
+    skipped: number;
+    failed: number;
+    results: Array<{
+      draftId: string;
+      title?: string;
+      status: string;
+      resource?: { name: string };
+      reason?: string;
+      error?: string;
+    }>;
+  } | null>(null);
   const [previewDraft, setPreviewDraft] = useState<GeoAgentGeoArticleDraft | null>(null);
 
   const loadDrafts = useCallback(async () => {
@@ -125,31 +143,65 @@ export function Drafts() {
   };
 
   const manageOrder = async (draft: GeoAgentGeoArticleDraft, action: PublishOrderAction) => {
-    if (!window.geoAgent?.managePublishOrder) return;
+    if (!window.geoAgent?.managePublishOrder) {
+      setError('系统未就绪，请稍后重试。');
+      return;
+    }
     const actionLabel: Record<PublishOrderAction, string> = {
       urge: '催稿',
       cancel: '取消订单',
       'apply-refund': '申请退款',
       'apply-republish': '申请补发',
     };
-    const reason = action === 'urge'
-      ? ''
-      : window.prompt(`请输入${actionLabel[action]}原因`);
-    if (reason === null) return;
-    if (action !== 'urge' && !text(reason)) {
+
+    // 催稿不需要原因，直接确认执行
+    if (action === 'urge') {
+      const confirmed = await showConfirm({
+        title: `确认${actionLabel[action]}`,
+        message: `确认要${actionLabel[action]}吗？`,
+        variant: 'info',
+      });
+      if (!confirmed) return;
+
+      setError(null);
+      setSuccess(null);
+      try {
+        await window.geoAgent.managePublishOrder(draft.id, action, {});
+        await loadDrafts();
+        setSuccess(`${actionLabel[action]}操作已提交，请等待系统处理。`);
+      } catch (actionError) {
+        setError(actionError instanceof Error ? actionError.message : String(actionError));
+      }
+      return;
+    }
+
+    // 取消订单、申请退款、申请补发需要输入原因
+    const reason = await showInputDialog({
+      title: `请输入${actionLabel[action]}原因`,
+      message: `${actionLabel[action]}需要填写原因，超级媒介会根据原因处理您的请求。`,
+      placeholder: `请输入${actionLabel[action]}原因...`,
+      variant: action === 'cancel' ? 'warning' : 'info',
+    });
+    if (reason === null) return; // 用户取消
+    if (!text(reason)) {
       setError(`${actionLabel[action]}需要填写原因。`);
       return;
     }
+
+    // 确认操作
     const confirmed = await showConfirm({
       title: `确认${actionLabel[action]}`,
       message: `确认要${actionLabel[action]}吗？`,
       variant: action === 'cancel' ? 'warning' : 'info',
     });
     if (!confirmed) return;
+
     setError(null);
+    setSuccess(null);
     try {
       await window.geoAgent.managePublishOrder(draft.id, action, { reason: text(reason) });
       await loadDrafts();
+      setSuccess(`${actionLabel[action]}操作已提交，请等待系统处理。`);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : String(actionError));
     }
@@ -200,6 +252,43 @@ export function Drafts() {
       setError(actionError instanceof Error ? actionError.message : String(actionError));
     } finally {
       setIsSyncingOrders(false);
+    }
+  };
+
+  const handleAutoPublish = async (role: 'support' | 'ranking') => {
+    if (!currentEnterpriseId || !window.geoAgent?.autoPublishArticles) return;
+
+    const draftCount = drafts.filter((d) => {
+      const draftRole = text(d.draft?.article_role);
+      return draftRole === role || (!draftRole && d.article_type?.includes(role));
+    }).length;
+
+    if (draftCount === 0) {
+      setError(`没有待发布的${role === 'ranking' ? '排行榜' : '支撑'}稿件。`);
+      return;
+    }
+
+    const confirmed = await showConfirm({
+      title: `确认自动发稿`,
+      message: `将自动发布 ${draftCount} 篇${role === 'ranking' ? '排行榜' : '支撑'}稿件，系统会自动选择最佳媒体资源。确认继续？`,
+      variant: 'info',
+    });
+    if (!confirmed) return;
+
+    setIsAutoPublishing(true);
+    setAutoPublishResult(null);
+    setError(null);
+    try {
+      const result = await window.geoAgent.autoPublishArticles(currentEnterpriseId, {
+        articleRole: role,
+        maxArticles: 50,
+      });
+      setAutoPublishResult(result);
+      await loadDrafts();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : String(actionError));
+    } finally {
+      setIsAutoPublishing(false);
     }
   };
 
@@ -257,6 +346,19 @@ export function Drafts() {
             <RefreshCw className={cn('size-3.5', isSyncingOrders && 'animate-spin')} />
             同步订单状态
           </button>
+          <button
+            className="inline-flex items-center gap-2 rounded-md border border-primary/20 bg-primary px-3 py-2 text-[11px] font-bold text-on-primary transition-all duration-200 hover:bg-primary/90 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={isAutoPublishing}
+            onClick={() => handleAutoPublish('support')}
+            type="button"
+          >
+            {isAutoPublishing ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Zap className="size-3.5" />
+            )}
+            {isAutoPublishing ? '自动发稿中...' : '一键自动发稿'}
+          </button>
           <Filter className="size-4 text-on-surface-variant" />
           <Segmented
             value={roleFilter}
@@ -273,6 +375,79 @@ export function Drafts() {
       {error && (
         <div className="mt-4 rounded-lg bg-red-50 px-4 py-3 text-[13px] text-red-700 dark:bg-red-950/30 dark:text-red-200">
           {error}
+        </div>
+      )}
+
+      {success && (
+        <div className="mt-4 flex items-center justify-between rounded-lg bg-emerald-50 px-4 py-3 text-[13px] text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-200">
+          <span>{success}</span>
+          <button
+            className="ml-4 text-emerald-500 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
+            onClick={() => setSuccess(null)}
+            type="button"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
+      {autoPublishResult && (
+        <div className="mt-4 rounded-lg border border-outline-variant/60 bg-surface/80 p-4 text-[13px]">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-primary">
+              <CheckCircle2 className="size-4 text-emerald-500" />
+              自动发稿结果
+            </div>
+            <button
+              className="rounded-md px-2 py-1 text-[11px] font-bold text-on-surface-variant transition-colors hover:bg-surface-container"
+              onClick={() => setAutoPublishResult(null)}
+              type="button"
+            >
+              关闭
+            </button>
+          </div>
+
+          <div className="mb-3 grid grid-cols-4 gap-3">
+            <div className="rounded-md bg-surface-container p-2 text-center">
+              <div className="text-[18px] font-bold text-primary">{autoPublishResult.total}</div>
+              <div className="text-[11px] text-on-surface-variant">总计</div>
+            </div>
+            <div className="rounded-md bg-emerald-50 p-2 text-center dark:bg-emerald-950/20">
+              <div className="text-[18px] font-bold text-emerald-600 dark:text-emerald-400">{autoPublishResult.published}</div>
+              <div className="text-[11px] text-emerald-600/70 dark:text-emerald-400/70">成功</div>
+            </div>
+            <div className="rounded-md bg-amber-50 p-2 text-center dark:bg-amber-950/20">
+              <div className="text-[18px] font-bold text-amber-600 dark:text-amber-400">{autoPublishResult.skipped}</div>
+              <div className="text-[11px] text-amber-600/70 dark:text-amber-400/70">跳过</div>
+            </div>
+            <div className="rounded-md bg-red-50 p-2 text-center dark:bg-red-950/20">
+              <div className="text-[18px] font-bold text-red-600 dark:text-red-400">{autoPublishResult.failed}</div>
+              <div className="text-[11px] text-red-600/70 dark:text-red-400/70">失败</div>
+            </div>
+          </div>
+
+          {autoPublishResult.results.length > 0 && (
+            <div className="max-h-40 overflow-y-auto rounded-md border border-outline-variant/40 bg-surface-container/40">
+              {autoPublishResult.results.map((result) => (
+                <div
+                  key={result.draftId}
+                  className={cn(
+                    'flex items-center justify-between gap-3 px-3 py-2 border-b border-outline-variant/30 last:border-0 text-[12px]',
+                    result.status === 'published' && 'text-emerald-600 dark:text-emerald-400',
+                    result.status === 'skipped' && 'text-amber-600 dark:text-amber-400',
+                    result.status === 'failed' && 'text-red-600 dark:text-red-400'
+                  )}
+                >
+                  <span className="flex-1 truncate">{result.title || result.draftId.slice(0, 8)}</span>
+                  <span className="whitespace-nowrap text-[11px]">
+                    {result.status === 'published' && `已发布 → ${result.resource?.name}`}
+                    {result.status === 'skipped' && `跳过: ${result.reason}`}
+                    {result.status === 'failed' && `失败: ${result.error}`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -478,15 +653,15 @@ const DraftRow: React.FC<DraftRowProps> = ({ draft, rankingReady, onAiEdit, onEd
       </td>
       <td className="px-5 py-4 align-top">
         <div className="flex flex-wrap justify-end gap-2">
-          <IconButton title="编辑" onClick={onEdit}><PenLine className="size-4" /></IconButton>
+          <IconButton title="编辑" onClick={onEdit} disabled={lockedByPublish}><PenLine className="size-4" /></IconButton>
           <IconButton title="AI 改稿" onClick={onAiEdit} disabled={lockedByPublish}>
             <Sparkles className="size-4" />
           </IconButton>
-          <IconButton title="标记已校对" onClick={onMarkReviewed} disabled={status === 'published'}>
+          <IconButton title="标记已校对" onClick={onMarkReviewed} disabled={lockedByPublish || status === 'reviewed'}>
             <CheckCircle2 className="size-4" />
           </IconButton>
           {order && (
-            <IconButton title="同步超级媒介订单" onClick={onSyncOrder} disabled={status === 'published'}>
+            <IconButton title="同步超级媒介订单" onClick={onSyncOrder} disabled={lockedByPublish}>
               <RefreshCw className="size-4" />
             </IconButton>
           )}
@@ -967,8 +1142,8 @@ function PublishResourceModal({ draft, onClose, onSaved }: { draft: GeoAgentGeoA
 }
 
 function Modal({ children, onClose, title }: { children: React.ReactNode; onClose: () => void; title: string }) {
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/30 p-4">
       <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-surface p-5 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
           <h3 className="text-[16px] font-bold text-primary">{title}</h3>
@@ -978,7 +1153,8 @@ function Modal({ children, onClose, title }: { children: React.ReactNode; onClos
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
