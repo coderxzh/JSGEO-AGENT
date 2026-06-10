@@ -820,6 +820,11 @@ declare global {
         publishType?: 1 | 2 | 3;
         accountRule?: 2 | 3;
       }) => Promise<GeoAgentGeoArticleDraft>;
+      getRankedPublishQuota: (projectId: string, platform?: string) => Promise<{
+        allowed: number;
+        published: number;
+        remaining: number;
+      }>;
       autoPublishArticles: (projectId: string, options?: {
         articleRole?: 'support' | 'ranking';
         maxArticles?: number;

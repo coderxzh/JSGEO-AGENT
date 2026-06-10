@@ -1467,6 +1467,10 @@ function registerHandlers() {
     return articlePublishService.publishArticle(articleId, adapterId, options);
   });
 
+  ipcMain.handle('geo-agent:ranked-publish-quota', async (_event, projectId, platform) => {
+    return articlePublishService.getRankedPublishQuota(projectId, platform);
+  });
+
   ipcMain.handle('geo-agent:auto-publish-articles', async (_event, projectId, options = {}) => {
     const autoPublishService = require('./services/autoPublishService.cjs');
     return autoPublishService.autoPublishArticles(projectId, options);

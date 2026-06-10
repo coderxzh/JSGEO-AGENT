@@ -127,6 +127,7 @@ contextBridge.exposeInMainWorld('geoAgent', {
   listPublishResources: (filters = {}) => ipcRenderer.invoke('geo-agent:list-publish-resources', filters),
   recommendPublishResources: (articleId, options = {}) => ipcRenderer.invoke('geo-agent:recommend-publish-resources', articleId, options),
   publishArticle: (articleId, adapterId = 'external_api_pending', options = {}) => ipcRenderer.invoke('geo-agent:publish-article', articleId, adapterId, options),
+  getRankedPublishQuota: (projectId, platform) => ipcRenderer.invoke('geo-agent:ranked-publish-quota', projectId, platform),
   autoPublishArticles: (projectId, options = {}) => ipcRenderer.invoke('geo-agent:auto-publish-articles', projectId, options),
   syncPublishOrder: (articleId) => ipcRenderer.invoke('geo-agent:sync-publish-order', articleId),
   syncPublishOrders: (projectId) => ipcRenderer.invoke('geo-agent:sync-publish-orders', projectId),
