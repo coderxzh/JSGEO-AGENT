@@ -94,6 +94,11 @@ contextBridge.exposeInMainWorld('geoAgent', {
   getAttachmentsForMessage: (messageId) => ipcRenderer.invoke('geo-agent:get-attachments-for-message', messageId),
   getAttachmentsForConversation: (conversationId) => ipcRenderer.invoke('geo-agent:get-attachments-for-conversation', conversationId),
   deleteChatAttachment: (attachmentId) => ipcRenderer.invoke('geo-agent:delete-chat-attachment', attachmentId),
+  // 企业图片管理
+  uploadEnterpriseImage: (payload) => ipcRenderer.invoke('geo-agent:upload-enterprise-image', payload),
+  getEnterpriseImages: (projectId) => ipcRenderer.invoke('geo-agent:get-enterprise-images', projectId),
+  deleteEnterpriseImage: (imageId) => ipcRenderer.invoke('geo-agent:delete-enterprise-image', imageId),
+  updateEnterpriseImageSort: (imageIds) => ipcRenderer.invoke('geo-agent:update-enterprise-image-sort', imageIds),
   getProjects: () => ipcRenderer.invoke('geo-agent:get-projects'),
   createProject: (payload) => ipcRenderer.invoke('geo-agent:create-project', payload),
   getProject: (projectId) => ipcRenderer.invoke('geo-agent:get-project', projectId),

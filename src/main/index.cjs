@@ -924,6 +924,30 @@ function registerHandlers() {
     return attachmentService.deleteAttachment(attachmentId);
   });
 
+  // 企业图片管理 IPC handlers
+  const enterpriseImageService = require('./services/enterpriseImageService.cjs');
+
+  ipcMain.handle('geo-agent:upload-enterprise-image', async (_event, payload = {}) => {
+    return enterpriseImageService.uploadImage({
+      projectId: payload.projectId,
+      filename: payload.filename,
+      mimeType: payload.mimeType,
+      content: payload.content,
+    });
+  });
+
+  ipcMain.handle('geo-agent:get-enterprise-images', async (_event, projectId) => {
+    return enterpriseImageService.getImagesByProject(projectId);
+  });
+
+  ipcMain.handle('geo-agent:delete-enterprise-image', async (_event, imageId) => {
+    return enterpriseImageService.deleteImage(imageId);
+  });
+
+  ipcMain.handle('geo-agent:update-enterprise-image-sort', async (_event, imageIds) => {
+    return enterpriseImageService.updateImageSort(imageIds);
+  });
+
   ipcMain.handle('geo-agent:run-geo-source-discovery', async (_event, geoProjectId, platform, fallbackReport = null) =>
     sourceDiscoveryService.generateSourceDiscovery({ geoProjectId, platform, fallbackReport }));
   ipcMain.handle('geo-agent:run-geo-source-discovery-stream', async (event, request = {}) => {

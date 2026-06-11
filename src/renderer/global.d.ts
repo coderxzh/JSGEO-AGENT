@@ -127,6 +127,22 @@ declare global {
     updated_at: string;
   };
 
+  type EnterpriseImage = {
+    id: string;
+    project_id: string;
+    filename: string;
+    original_filename: string;
+    mime_type: string | null;
+    file_size: number;
+    oss_url: string;
+    oss_object_key: string;
+    width: number | null;
+    height: number | null;
+    sort_order: number;
+    created_at: string;
+    updated_at: string;
+  };
+
   type GeoAgentKnowledgeDraftAssetInput = {
     filename: string;
     content_type?: string | null;
@@ -930,6 +946,16 @@ declare global {
         created_at: string;
       }>>;
       deleteChatAttachment: (attachmentId: string) => Promise<boolean>;
+      // 企业图片管理
+      uploadEnterpriseImage: (payload: {
+        projectId: string;
+        filename: string;
+        mimeType: string;
+        content: string;
+      }) => Promise<EnterpriseImage>;
+      getEnterpriseImages: (projectId: string) => Promise<EnterpriseImage[]>;
+      deleteEnterpriseImage: (imageId: string) => Promise<{ success: boolean }>;
+      updateEnterpriseImageSort: (imageIds: string[]) => Promise<{ success: boolean }>;
       getKnowledgeEntries: (projectId?: string | null, limit?: number) => Promise<GeoAgentKnowledgeEntriesResponse>;
       createKnowledgeEntry: (entry: {
         content: string;

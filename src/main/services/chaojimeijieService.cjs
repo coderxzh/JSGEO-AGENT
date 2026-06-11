@@ -87,8 +87,8 @@ function flatten(value, separator = '') {
 }
 
 function flattenPayload(value) {
-  // 严格遵循超级媒介 API 文档的 flatten 函数实现
-  // 参考 PHP 实现：array_is_list → sort；字典 → ksort
+  // 超级媒介 API 签名算法的 flatten 实现
+  // 需要与 encodeQuery/encodeBody 的过滤行为保持一致：跳过 null、undefined、空字符串
   if (Array.isArray(value)) {
     return [...value]
       .sort((a, b) => String(a).localeCompare(String(b)))
@@ -97,7 +97,7 @@ function flattenPayload(value) {
   }
   if (value && typeof value === 'object') {
     return Object.keys(value)
-      .filter((key) => key !== 'signature')
+      .filter((key) => key !== 'signature' && value[key] != null && value[key] !== '')
       .sort()
       .map((key) => {
         const item = value[key];
@@ -135,10 +135,10 @@ function withAuth(params = {}) {
 
 function encodeQuery(params) {
   // 手动构建查询字符串，不使用 URLSearchParams 以避免对 [] 的自动编码
-  // 签名算法基于 sn[]=value 格式计算，查询字符串必须保持一致
+  // 过滤逻辑与 flattenPayload 保持一致：只排除 undefined 和 null
   const parts = [];
   Object.entries(params)
-    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .filter(([, value]) => value !== undefined && value !== null)
     .forEach(([key, value]) => {
       if (Array.isArray(value)) {
         value.forEach((item) => parts.push(`${key}[]=${item}`));
@@ -151,10 +151,10 @@ function encodeQuery(params) {
 
 function encodeBody(params) {
   // POST 请求体使用 x-www-form-urlencoded 格式
-  // 数组参数保持 sn[]=value 格式，与签名计算一致
+  // 过滤逻辑与 flattenPayload 保持一致：只排除 undefined 和 null
   const parts = [];
   Object.entries(params)
-    .filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .filter(([, value]) => value !== undefined && value !== null)
     .forEach(([key, value]) => {
       if (Array.isArray(value)) {
         value.forEach((item) => parts.push(`${key}[]=${item}`));

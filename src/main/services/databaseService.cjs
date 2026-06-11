@@ -206,6 +206,25 @@ function createSchema(database) {
     CREATE INDEX IF NOT EXISTS idx_chat_attachments_project
       ON chat_attachments(project_id, created_at);
 
+    CREATE TABLE IF NOT EXISTS enterprise_images (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      filename TEXT NOT NULL,
+      original_filename TEXT NOT NULL,
+      mime_type TEXT,
+      file_size INTEGER DEFAULT 0,
+      oss_url TEXT NOT NULL,
+      oss_object_key TEXT NOT NULL,
+      width INTEGER,
+      height INTEGER,
+      sort_order INTEGER DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_enterprise_images_project
+      ON enterprise_images(project_id, sort_order);
+
     CREATE TABLE IF NOT EXISTS workflow_events (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

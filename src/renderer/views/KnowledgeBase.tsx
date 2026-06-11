@@ -26,6 +26,8 @@ import {
   PROFILE_FIELD_DEFINITIONS,
 } from '../lib/profileSchema';
 import { showConfirm } from '../components/ConfirmDialog';
+import { Shimmer } from '../components/ai-elements/shimmer';
+import { cn } from '../lib/utils';
 
 type KnowledgeMode = 'list' | 'detail' | 'builder';
 
@@ -223,7 +225,8 @@ export function KnowledgeBase() {
     deepseek: { consulting: null, review: null },
   });
   const [profileForm, setProfileForm] = useState<ProfileFormState>(emptyProfile);
-  const [uploadedImages, setUploadedImages] = useState<UploadedImageAsset[]>([]);
+  const [uploadedImages, setUploadedImages] = useState<EnterpriseImage[]>([]);
+  const projectId = selectedProfile?.project_id || '';
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -262,6 +265,12 @@ export function KnowledgeBase() {
         setKnowledgeEntries(response.entries);
         setKnowledgeTotal(response.total);
         setIndexStatus(response.index_status ?? null);
+        // 加载企业图片
+        if (window.geoAgent?.getEnterpriseImages) {
+          window.geoAgent.getEnterpriseImages(projectId)
+            .then(setUploadedImages)
+            .catch(() => setUploadedImages([]));
+        }
         return window.geoAgent?.ensureGeoProject?.(projectId)
           .then((project) => {
             setGeoProject(project);
@@ -461,6 +470,7 @@ export function KnowledgeBase() {
   if (mode === 'builder') {
     return (
       <EnterpriseProfileBuilder
+        projectId={projectId}
         error={profileError}
         form={profileForm}
         images={uploadedImages}
@@ -631,6 +641,7 @@ export function KnowledgeBase() {
 }
 
 function EnterpriseProfileBuilder({
+  projectId,
   error,
   form,
   images,
@@ -641,14 +652,15 @@ function EnterpriseProfileBuilder({
   onImagesChange,
   onSave,
 }: {
+  projectId: string;
   error: string | null;
   form: ProfileFormState;
-  images: UploadedImageAsset[];
+  images: EnterpriseImage[];
   isEditing: boolean;
   isSaving: boolean;
   onBack: () => void;
   onChange: (key: keyof ProfileFormState, value: string) => void;
-  onImagesChange: React.Dispatch<React.SetStateAction<UploadedImageAsset[]>>;
+  onImagesChange: React.Dispatch<React.SetStateAction<EnterpriseImage[]>>;
   onSave: () => void;
 }) {
   return (
@@ -700,12 +712,16 @@ function EnterpriseProfileBuilder({
               </p>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
-              {section.title === '图片与关键词' && (
+              {section.title === '补充资料' && (
                 <div className="md:col-span-2">
-                  <ImageUploadField images={images} onImagesChange={onImagesChange} />
+                  <ImageUploadField
+                    projectId={projectId}
+                    images={images}
+                    onImagesChange={onImagesChange}
+                  />
                 </div>
               )}
-              {section.fields.map((field) => {
+              {section.fields.filter((field) => field.key !== 'image_notes').map((field) => {
                 const fieldKey = field.key;
                 return (
                   <React.Fragment key={fieldKey}>
@@ -734,85 +750,132 @@ function EnterpriseProfileBuilder({
 }
 
 function ImageUploadField({
+  projectId,
   images,
   onImagesChange,
 }: {
-  images: UploadedImageAsset[];
-  onImagesChange: React.Dispatch<React.SetStateAction<UploadedImageAsset[]>>;
+  projectId: string;
+  images: EnterpriseImage[];
+  onImagesChange: React.Dispatch<React.SetStateAction<EnterpriseImage[]>>;
 }) {
-  const handleUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const handleUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.currentTarget.files ?? []) as File[];
-    if (!files.length) {
+    if (!files.length || !projectId) {
       return;
     }
 
-    const nextImages = files
-      .filter((file) => file.type.startsWith('image/'))
-      .map((file) => ({
-        id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
-        name: file.name,
-        size: file.size,
-        type: file.type,
-        previewUrl: URL.createObjectURL(file),
-      }));
+    setIsUploading(true);
+    setUploadError(null);
 
-    onImagesChange((current) => [...current, ...nextImages]);
-    event.target.value = '';
+    try {
+      for (const file of files) {
+        if (!file.type.startsWith('image/')) {
+          continue;
+        }
+
+        // 限制文件大小（5MB）
+        if (file.size > 5 * 1024 * 1024) {
+          setUploadError(`${file.name} 超过 5MB 限制`);
+          continue;
+        }
+
+        // 转换为 base64
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = () => reject(new Error('文件读取失败'));
+          reader.readAsDataURL(file);
+        });
+
+        // 上传到 OSS
+        const result = await window.geoAgent.uploadEnterpriseImage({
+          projectId,
+          filename: file.name,
+          mimeType: file.type,
+          content: base64,
+        });
+
+        onImagesChange((current) => [...current, result]);
+      }
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : '上传失败');
+    } finally {
+      setIsUploading(false);
+      event.target.value = '';
+    }
   };
 
-  const removeImage = (id: string) => {
-    onImagesChange((current) => {
-      const removed = current.find((image) => image.id === id);
-      if (removed) {
-        URL.revokeObjectURL(removed.previewUrl);
-      }
-      return current.filter((image) => image.id !== id);
-    });
+  const removeImage = async (image: EnterpriseImage) => {
+    try {
+      await window.geoAgent.deleteEnterpriseImage(image.id);
+      onImagesChange((current) => current.filter((img) => img.id !== image.id));
+    } catch (error) {
+      console.error('Failed to delete image:', error);
+    }
   };
 
   return (
     <div>
       <span className="mb-2 block text-[12px] font-bold text-primary">
-        图片上传
+        图片资料
       </span>
-      <label className="flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-outline-variant/50 bg-white px-6 py-8 text-center transition-colors hover:border-secondary hover:bg-secondary/5 dark:bg-[#1f1f1f] dark:hover:bg-secondary/10">
-        <Upload className="mb-3 h-8 w-8 text-secondary" />
-        <span className="text-[14px] font-bold text-primary">上传公司/门店/产品图片</span>
+      <label className={cn(
+        "flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-outline-variant/50 bg-white px-6 py-8 text-center transition-colors hover:border-secondary hover:bg-secondary/5 dark:bg-[#1f1f1f] dark:hover:bg-secondary/10",
+        isUploading && "opacity-50 cursor-not-allowed"
+      )}>
+        {isUploading ? (
+          <Shimmer className="mb-3 h-8 w-8 text-secondary" />
+        ) : (
+          <Upload className="mb-3 h-8 w-8 text-secondary" />
+        )}
+        <span className="text-[14px] font-bold text-primary">
+          {isUploading ? '上传中...' : '上传公司/门店/产品图片'}
+        </span>
         <span className="mt-2 max-w-2xl text-[13px] leading-relaxed text-on-surface-variant">
-          支持门头照、全景图、产品图片、合作商墙、企业形象墙等。建议与高德、美团、抖音展示图片保持一致。
+          支持 JPG、PNG、WebP 格式，单张不超过 5MB。建议与高德、美团、抖音展示图片保持一致。
         </span>
         <span className="mt-3 rounded-full bg-secondary/10 px-3 py-1 text-[12px] font-bold text-secondary">
           选择图片
         </span>
         <input
-          accept="image/*"
+          accept="image/jpeg,image/png,image/webp"
           className="sr-only"
+          disabled={isUploading}
           multiple
           onChange={handleUpload}
           type="file"
         />
       </label>
 
+      {uploadError && (
+        <div className="mt-3 rounded-lg bg-error/10 px-4 py-2 text-[13px] text-error">
+          {uploadError}
+        </div>
+      )}
+
       {images.length > 0 && (
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           {images.map((image) => (
             <div className="group relative overflow-hidden rounded-xl border border-outline-variant/30 bg-white dark:bg-[#1f1f1f]" key={image.id}>
               <img
-                alt={image.name}
+                alt={image.original_filename}
                 className="aspect-video w-full object-cover"
-                src={image.previewUrl}
+                src={image.oss_url}
               />
               <button
                 className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100"
-                onClick={() => removeImage(image.id)}
+                onClick={() => removeImage(image)}
                 title="移除图片"
                 type="button"
               >
                 <X className="h-4 w-4" />
               </button>
               <div className="p-3">
-                <p className="truncate text-[12px] font-bold text-primary">{image.name}</p>
-                <p className="mt-1 text-[11px] text-on-surface-variant/70">{formatFileSize(image.size)}</p>
+                <p className="truncate text-[12px] font-bold text-primary">{image.original_filename}</p>
+                <p className="mt-1 text-[11px] text-on-surface-variant/70">{formatFileSize(image.file_size)}</p>
               </div>
             </div>
           ))}
