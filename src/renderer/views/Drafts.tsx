@@ -927,12 +927,20 @@ function PublishResourceModal({ draft, onClose, onSaved }: { draft: GeoAgentGeoA
   }, [loadResources]);
 
   const syncResources = async () => {
-    if (!window.geoAgent?.syncChaojimeijieResources) return;
+    if (!window.geoAgent?.syncAllChaojimeijieResources) return;
     setIsLoadingResources(true);
     setError(null);
     try {
-      const response = await window.geoAgent.syncChaojimeijieResources(resourceType, 1, 200);
-      setResources(response.items ?? []);
+      await window.geoAgent.syncAllChaojimeijieResources();
+      // 同步完成后重新加载当前类型的资源
+      const response = await window.geoAgent.listPublishResources({
+        resourceType,
+        query,
+        status: 2,
+        maxPrice: maxPrice || undefined,
+        limit: 100,
+      });
+      setResources(response.resources ?? []);
     } catch (syncError) {
       setError(syncError instanceof Error ? syncError.message : String(syncError));
     } finally {

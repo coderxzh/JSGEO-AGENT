@@ -1636,6 +1636,11 @@ function registerHandlers() {
     return articlePublishService.syncChaojimeijieResources(resourceType, page, size);
   });
 
+  ipcMain.handle('geo-agent:sync-all-resources', async (_event) => {
+    const chaojimeijieService = require('./services/chaojimeijieService');
+    return chaojimeijieService.syncAllResources();
+  });
+
   ipcMain.handle('geo-agent:list-publish-resources', async (_event, filters = {}) => {
     return articlePublishService.listPublishResources(filters);
   });

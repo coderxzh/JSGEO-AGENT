@@ -729,6 +729,13 @@ async function autoPublishArticles(projectId, options = {}) {
     return roleMatch && statusMatch;
   }).slice(0, maxArticles);
 
+  // 4.5 确保资源已同步
+  const syncStatus = chaojimeijieService.needsSync();
+  if (syncStatus.needed) {
+    console.log(`[autoPublish] 资源同步: ${syncStatus.reason}`);
+    await chaojimeijieService.syncAllResources();
+  }
+
   // 5. 获取可用资源（含价格过滤）
   const availableResources = getAvailableResources('all', maxPrice);
 

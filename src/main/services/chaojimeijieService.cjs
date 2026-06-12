@@ -293,6 +293,79 @@ async function syncResources(resourceType = 'media', page = 1, size = 200) {
   };
 }
 
+/**
+ * 检查资源是否需要同步
+ * @returns {{ needed: boolean, reason: string }}
+ */
+function needsSync() {
+  const db = getDb();
+  const row = db.prepare(`
+    SELECT COUNT(*) as cnt, MAX(synced_at) as last_synced
+    FROM publish_resources
+    WHERE provider = ?
+  `).get(PROVIDER);
+
+  const count = row?.cnt || 0;
+  const lastSynced = row?.last_synced;
+
+  if (count < 100) {
+    return { needed: true, reason: `本地仅有 ${count} 条资源，需要全量同步` };
+  }
+  if (lastSynced) {
+    const hoursSinceSync = (Date.now() - new Date(lastSynced).getTime()) / (1000 * 60 * 60);
+    if (hoursSinceSync > 24) {
+      return { needed: true, reason: `上次同步于 ${Math.round(hoursSinceSync)} 小时前，数据已过期` };
+    }
+  }
+  return { needed: false, reason: '' };
+}
+
+/**
+ * 全量同步所有资源（media + we-media 并行）
+ * @param {Function} onProgress - 进度回调 ({ mediaSynced, mediaTotal, weMediaSynced, weMediaTotal })
+ */
+async function syncAllResources(onProgress) {
+  const LOG = '[chaojimeijie]';
+  console.log(`${LOG} 开始全量同步资源...`);
+
+  const syncType = async (resourceType) => {
+    const normalizedType = normalizeResourceType(resourceType);
+    const pageSize = 200;
+    let synced = 0;
+    let total = 0;
+    let page = 1;
+
+    while (page <= 100) {
+      const data = await request(normalizedType, 'resource', { page, size: pageSize }, 'GET');
+      const items = Array.isArray(data?.items) ? data.items : [];
+      total = Number(data?.total || total || items.length);
+      saveResources(normalizedType, items);
+      synced += items.length;
+      if (onProgress) {
+        onProgress({
+          mediaSynced: normalizedType === 'media' ? synced : undefined,
+          mediaTotal: normalizedType === 'media' ? total : undefined,
+          weMediaSynced: normalizedType === 'we-media' ? synced : undefined,
+          weMediaTotal: normalizedType === 'we-media' ? total : undefined,
+        });
+      }
+      console.log(`${LOG} ${normalizedType} 第${page}页: ${synced}/${total}`);
+      if (items.length < pageSize || synced >= total) break;
+      page++;
+    }
+
+    return { total, synced };
+  };
+
+  const [mediaResult, weMediaResult] = await Promise.all([
+    syncType('media'),
+    syncType('we-media'),
+  ]);
+
+  console.log(`${LOG} 全量同步完成: media=${mediaResult.synced}/${mediaResult.total}, we-media=${weMediaResult.synced}/${weMediaResult.total}`);
+  return { media: mediaResult, weMedia: weMediaResult };
+}
+
 async function queryResources(resourceType = 'media', ids = []) {
   const normalizedType = normalizeResourceType(resourceType);
   const data = await request(normalizedType, 'resource-query', { id: ids }, 'GET');
@@ -638,10 +711,12 @@ module.exports = {
   listResources,
   manageOrder,
   mapOrderStatus,
+  needsSync,
   queryResources,
   request,
   searchResources,
   signPayload,
+  syncAllResources,
   syncOrderByArticle,
   syncOrdersByProject,
   syncResources,

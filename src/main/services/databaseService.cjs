@@ -321,6 +321,9 @@ function createSchema(database) {
     CREATE INDEX IF NOT EXISTS idx_publish_resources_type_status
       ON publish_resources(resource_type, status, synced_at);
 
+    CREATE INDEX IF NOT EXISTS idx_publish_resources_name
+      ON publish_resources(name);
+
     CREATE TABLE IF NOT EXISTS publish_orders (
       id TEXT PRIMARY KEY,
       article_id TEXT NOT NULL REFERENCES geo_article_drafts(id) ON DELETE CASCADE,
@@ -480,6 +483,9 @@ function migrateSchema(database) {
 
     CREATE INDEX IF NOT EXISTS idx_publish_resources_type_status
       ON publish_resources(resource_type, status, synced_at);
+
+    CREATE INDEX IF NOT EXISTS idx_publish_resources_name
+      ON publish_resources(name);
 
     CREATE TABLE IF NOT EXISTS publish_orders (
       id TEXT PRIMARY KEY,
