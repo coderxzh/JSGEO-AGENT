@@ -71,6 +71,7 @@ async function runCycle() {
     // 延迟加载服务（避免循环依赖）
     const visibilityCheckService = require('./visibilityCheckService');
     const reflectionService = require('./reflectionService');
+    const globalRuleService = require('./globalRuleService.cjs');
 
     for (const project of projects) {
       try {
@@ -144,6 +145,24 @@ async function runCycle() {
       } catch (projectError) {
         console.error(`[AutoLearningScheduler] 项目 ${project.id} 执行失败:`, projectError.message);
       }
+    }
+
+    // 提取全局规则（增量处理新文章）
+    try {
+      await globalRuleService.processNewArticles(
+        async (article) => {
+          // 提取文章的标题和结构模式
+          // 这里可以先返回空数组，后续通过 LLM 实现
+          return [];
+        },
+        async (patterns, existingRules) => {
+          // 合并模式到全局规则
+          // 这里可以先返回空结果，后续通过 LLM 实现
+          return { created: 0 };
+        }
+      );
+    } catch (globalErr) {
+      console.error('[AutoLearningScheduler] 全局规则提取失败:', globalErr.message);
     }
 
     // 更新最后执行时间
