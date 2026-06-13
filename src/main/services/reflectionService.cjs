@@ -6,6 +6,7 @@ const articlePublishService = require('./articlePublishService.cjs');
 const { chatCompletion, parseJsonContent } = require('./llmGateway.cjs');
 const { getTaskPolicy } = require('./modelPolicyService.cjs');
 const { fieldText } = require('./profileFieldService.cjs');
+const { getSkill } = require('./skillService.cjs');
 
 function nowIso() {
   return new Date().toISOString();
@@ -51,15 +52,12 @@ function rowToRule(row) {
 }
 
 function buildMessages({ profile, check, drafts }) {
+  const skill = getSkill('geo-rule-extraction');
+  const systemContent = skill?.content || '你是 GEO 优化规则提取专家。根据可见性检测结果和企业档案，提取可执行的优化规则。';
   return [
     {
       role: 'system',
-      content: [
-        '你是 GEO 复盘优化助手。',
-        '请根据 AI 推荐可见性检测结果，生成下一轮内容优化规则。',
-        '规则必须保持 pending 含义：用户确认前不得假设已经生效。',
-        '只输出合法 JSON。',
-      ].join('\n'),
+      content: systemContent,
     },
     {
       role: 'user',
