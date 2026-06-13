@@ -668,6 +668,8 @@ declare global {
           search_usage?: GeoAgentSearchUsage;
           reasoning_content?: string | null;
           reasoning_delta?: string;
+          run_id?: string;
+          context_pack_summary?: string;
           context_usage?: {
             usedTokens: number;
             maxTokens: number;
@@ -684,6 +686,12 @@ declare global {
             actionType?: 'send_message' | 'propose_action' | 'navigate';
             payload?: Record<string, unknown>;
           }>;
+          pending_action?: {
+            type: string;
+            title: string;
+            summary?: string;
+            payload?: Record<string, unknown>;
+          };
           additional_articles?: unknown;
           search_status?: 'in_progress' | 'completed';
           search_query?: string;
@@ -701,6 +709,8 @@ declare global {
         search_actions?: GeoAgentSearchAction[];
         search_usage?: GeoAgentSearchUsage;
         reasoning_content?: string | null;
+        run_id?: string;
+        context_pack_summary?: string;
         context_usage?: {
           usedTokens: number;
           maxTokens: number;
@@ -718,7 +728,60 @@ declare global {
           payload?: Record<string, unknown>;
         }>;
         additional_articles?: unknown;
+        pending_action?: {
+          type: string;
+          title: string;
+          summary?: string;
+          payload?: Record<string, unknown>;
+        };
       }>;
+      runAgentStream?: (
+        message: string,
+        conversationId: string | null | undefined,
+        options: {
+          projectId?: string;
+          skillId?: string;
+          platform?: 'doubao' | 'deepseek' | string;
+        },
+        onEvent: (event: {
+          type: 'meta' | 'status' | 'delta' | 'reasoning_delta' | 'search' | 'done' | 'error';
+          text?: string;
+          content?: string;
+          message?: string;
+          conversation_id?: string;
+          provider?: string;
+          model?: string;
+          error?: string | null;
+          reasoning_content?: string | null;
+          run_id?: string;
+          context_pack_summary?: string;
+          context_usage?: {
+            usedTokens: number;
+            maxTokens: number;
+            usagePercentage?: number;
+            modelId?: string;
+            inputTokens?: number;
+            outputTokens?: number;
+            reasoningTokens?: number;
+            cacheTokens?: number;
+          };
+          suggestions?: Array<{
+            label: string;
+            value: string;
+            actionType?: 'send_message' | 'propose_action' | 'navigate';
+            payload?: Record<string, unknown>;
+          }>;
+          pending_action?: {
+            type: string;
+            title: string;
+            summary?: string;
+            payload?: Record<string, unknown>;
+          };
+          additional_articles?: unknown;
+        }) => void
+      ) => Promise<Record<string, unknown>>;
+      approveAgentAction?: (payload?: Record<string, unknown>) => Promise<Record<string, unknown>>;
+      rejectAgentAction?: (payload?: Record<string, unknown>) => Promise<Record<string, unknown>>;
       getProjects: () => Promise<{ projects: GeoAgentProjectSummary[] }>;
       createProject: (payload: GeoAgentCreateProjectPayload) => Promise<{ project: GeoAgentProjectSummary }>;
       getProject: (projectId: string) => Promise<{ project: GeoAgentProjectSummary }>;

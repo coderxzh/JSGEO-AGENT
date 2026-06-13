@@ -78,6 +78,15 @@ contextBridge.exposeInMainWorld('geoAgent', {
       });
     });
   },
+  runAgentStream: (message, conversationId, options = {}, onEvent) => invokeStream('geo-agent:run-agent-stream', {
+    message,
+    conversation_id: conversationId,
+    skill_id: options.skillId,
+    project_id: options.projectId,
+    platform: options.platform,
+  }, onEvent),
+  approveAgentAction: (payload = {}) => ipcRenderer.invoke('geo-agent:approve-agent-action', payload),
+  rejectAgentAction: (payload = {}) => ipcRenderer.invoke('geo-agent:reject-agent-action', payload),
   sendChat: (message, conversationId, selectedModelOrOptions = null, maybeOptions = {}) => {
     const selectedModel = typeof selectedModelOrOptions === 'string' ? selectedModelOrOptions : null;
     const options = typeof selectedModelOrOptions === 'string' ? maybeOptions : (selectedModelOrOptions || {});

@@ -116,6 +116,27 @@ function articleSummary(projectId) {
   }).join('\n');
 }
 
+function pendingActionSummary(projectId) {
+  if (!projectId) return '';
+  const rows = getDb().prepare(`
+    SELECT content, metadata_json, created_at
+    FROM messages
+    WHERE project_id = ?
+      AND role = 'assistant'
+      AND metadata_json LIKE '%approval-requested%'
+    ORDER BY datetime(created_at) DESC
+    LIMIT 5
+  `).all(projectId);
+  if (!rows.length) return '';
+  return rows.map((row) => {
+    const metadata = parseJson(row.metadata_json, {});
+    return [
+      metadata.type || 'pending_action',
+      previewText(row.content, 180),
+    ].filter(Boolean).join(': ');
+  }).join('\n');
+}
+
 function buildSystemPrompt(projectId, conversationSummary = '') {
   const sections = [
     '你是 GEO-Agent Studio 的工作流智能助手。请用中文回答。',
@@ -128,6 +149,8 @@ function buildSystemPrompt(projectId, conversationSummary = '') {
   if (workflow) sections.push(`[最近 GEO 阶段状态]\n${workflow}`);
   const articles = articleSummary(projectId);
   if (articles) sections.push(`[最近稿件]\n${articles}`);
+  const pendingActions = pendingActionSummary(projectId);
+  if (pendingActions) sections.push(`[待确认动作]\n${pendingActions}`);
   if (conversationSummary) sections.push(`[历史会话摘要]\n${conversationSummary}`);
   return sections.join('\n\n');
 }
@@ -151,7 +174,18 @@ function truncateMessages(messages, maxTokens, recentCount) {
   return output;
 }
 
-async function buildContextWindow(conversationId, projectId, options = {}) {
+function buildContextSummary(pack) {
+  const parts = [];
+  if (pack.projectMemory) parts.push('企业知识库摘要');
+  if (pack.workflowState) parts.push('GEO 阶段状态');
+  if (pack.draftState) parts.push('最近稿件');
+  if (pack.pendingActions) parts.push('待确认动作');
+  if (pack.conversationSummary) parts.push('历史对话摘要');
+  if (pack.recentMessages?.length) parts.push(`最近 ${pack.recentMessages.length} 条消息`);
+  return parts.length ? parts.join('、') : '仅使用当前消息';
+}
+
+async function buildContextPack(conversationId, projectId, options = {}) {
   const maxTokens = Number(options.maxTokens || 100000);
   const recentMessageCount = Number(options.recentMessageCount || 10);
   let messages = [];
@@ -167,16 +201,25 @@ async function buildContextWindow(conversationId, projectId, options = {}) {
     }
   }
 
-  const systemPrompt = buildSystemPrompt(projectId, conversationSummary);
   const historyBudget = Math.max(1000, Math.floor(maxTokens * 0.7));
-  const history = truncateMessages(messages, historyBudget, recentMessageCount);
+  const recentMessages = truncateMessages(messages, historyBudget, recentMessageCount);
+  const systemPrompt = buildSystemPrompt(projectId, conversationSummary);
   const systemTokens = estimateTokens(systemPrompt);
-  const historyTokens = history.reduce((sum, message) => sum + estimateTokens(message.content), 0);
+  const historyTokens = recentMessages.reduce((sum, message) => sum + estimateTokens(message.content), 0);
   const total = systemTokens + historyTokens;
-
-  return {
+  const pack = {
+    projectMemory: profileSummary(projectId),
+    workflowState: workflowSummary(projectId),
+    draftState: articleSummary(projectId),
+    pendingActions: pendingActionSummary(projectId),
+    conversationSummary,
+    retrievedEvidence: '',
+    recentMessages,
     systemPrompt,
-    history,
+    modelMessages: [
+      { role: 'system', content: systemPrompt },
+      ...recentMessages,
+    ],
     tokenUsage: {
       system: systemTokens,
       history: historyTokens,
@@ -184,6 +227,20 @@ async function buildContextWindow(conversationId, projectId, options = {}) {
       maxTokens,
       usagePercentage: Math.min(100, Math.round((total / maxTokens) * 100)),
     },
+    summary: '',
+  };
+  pack.summary = buildContextSummary(pack);
+  return pack;
+}
+
+async function buildContextWindow(conversationId, projectId, options = {}) {
+  const pack = await buildContextPack(conversationId, projectId, options);
+
+  return {
+    systemPrompt: pack.systemPrompt,
+    history: pack.recentMessages,
+    tokenUsage: pack.tokenUsage,
+    contextPackSummary: pack.summary,
   };
 }
 
@@ -191,6 +248,7 @@ module.exports = {
   estimateTokens,
   truncateMessages,
   buildSystemPrompt,
+  buildContextPack,
   buildContextWindow,
   isGeoMessage,
   GEO_MESSAGE_TYPES,

@@ -23,6 +23,7 @@ const skillService = require('./services/skillService.cjs');
 const { fieldText } = require('./services/profileFieldService.cjs');
 const llmGateway = require('./services/llmGateway.cjs');
 const contextWindowService = require('./services/contextWindowService.cjs');
+const agentRuntimeService = require('./services/agentRuntimeService.cjs');
 
 const rootDir = path.resolve(__dirname, '..', '..');
 const isDev = !app.isPackaged;
@@ -937,6 +938,14 @@ function registerHandlers() {
     const payload = request.payload || {};
     const channel = `geo-agent:chat-stream:${requestId}`;
     try {
+      const doneEvent = await agentRuntimeService.runChatStream({
+        payload,
+        sender: event.sender,
+        channel,
+      });
+      event.sender.send(channel, doneEvent);
+      return doneEvent;
+
       const projectId = payload.project_id || payload.projectId;
       const conversation = conversationService.ensureConversation({
         projectId,
@@ -1141,6 +1150,57 @@ function registerHandlers() {
       return { type: 'error', error: message };
     }
   });
+
+  ipcMain.handle('geo-agent:run-agent-stream', async (event, request = {}) => {
+    const requestId = request.requestId;
+    const payload = request.payload || {};
+    const channel = `geo-agent:run-agent-stream:${requestId}`;
+    try {
+      const doneEvent = await agentRuntimeService.runChatStream({
+        payload,
+        sender: event.sender,
+        channel,
+      });
+      event.sender.send(channel, doneEvent);
+      return doneEvent;
+    } catch (error) {
+      const message = error.message || String(error);
+      event.sender.send(channel, { type: 'error', error: message });
+      return { type: 'error', error: message };
+    }
+  });
+
+  ipcMain.handle('geo-agent:approve-agent-action', async (_event, payload = {}) => {
+    const action = payload.type ? payload : payload.pendingAction || payload.pending_action || {};
+    const actionPayload = action.payload || payload.payload || {};
+    if (action.type === 'knowledge_update') {
+      const projectId = actionPayload.projectId || actionPayload.project_id;
+      const patch = actionPayload.patch || actionPayload.profile || payload.patch || payload.profile || null;
+      if (!projectId) throw new Error('projectId is required.');
+      if (!patch || Object.keys(patch).length === 0) {
+        return {
+          ok: false,
+          status: 'needs_patch',
+          message: '该知识库更新提案还没有明确字段 patch，未写入知识库。',
+          payload,
+        };
+      }
+      const result = await knowledgeService.updateKnowledgeProfile(projectId, patch);
+      return { ok: true, status: 'applied', result };
+    }
+    return {
+      ok: false,
+      status: 'unsupported_action',
+      message: '当前动作类型暂不支持统一审批执行。',
+      payload,
+    };
+  });
+
+  ipcMain.handle('geo-agent:reject-agent-action', async (_event, payload = {}) => ({
+    ok: true,
+    status: 'rejected',
+    payload,
+  }));
 
   ipcMain.handle('geo-agent:get-conversation', async (_event, conversationId) =>
     conversationService.getConversation(conversationId));

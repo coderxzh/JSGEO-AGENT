@@ -181,6 +181,8 @@ type ChatMessage = {
   model?: string;
   actionBusy?: boolean;
   contextUsage?: ContextUsage;
+  contextSummary?: string;
+  runId?: string;
   pendingAction?: {
     type: string;
     title: string;
@@ -979,6 +981,7 @@ export function AgentStudio() {
   const [geoProject, setGeoProject] = useState<GeoAgentGeoProject | null>(null);
   const [workflowState, setWorkflowState] = useState<GeoAgentWorkflowState | null>(null);
   const [latestContextUsage, setLatestContextUsage] = useState<ContextUsage | null>(null);
+  const [latestContextSummary, setLatestContextSummary] = useState<string | null>(null);
   const [supplementDraftDialog, setSupplementDraftDialog] = useState<{
     messageId: string;
     draft: GeoAgentKnowledgeDraft;
@@ -1717,6 +1720,9 @@ export function AgentStudio() {
               if (event.context_usage) {
                 setLatestContextUsage(event.context_usage as ContextUsage);
               }
+              if (event.context_pack_summary) {
+                setLatestContextSummary(event.context_pack_summary);
+              }
             }
             if (event.type === 'status' && event.message) {
               setMessages((current) => updateMessage(current, assistantId, {
@@ -1756,6 +1762,9 @@ export function AgentStudio() {
               if (event.context_usage) {
                 setLatestContextUsage(event.context_usage as ContextUsage);
               }
+              if (event.context_pack_summary) {
+                setLatestContextSummary(event.context_pack_summary);
+              }
               const eventSuggestions = Array.isArray(event.suggestions)
                 ? event.suggestions as ChatSuggestion[]
                 : [];
@@ -1784,6 +1793,9 @@ export function AgentStudio() {
                 provider: event.provider,
                 model: event.model,
                 contextUsage: event.context_usage as ContextUsage | undefined,
+                contextSummary: event.context_pack_summary,
+                runId: event.run_id,
+                pendingAction: event.pending_action,
                 error: event.error,
                 reasoning: shouldShowReasoning ? `${hasFiles && knowledgeIntent !== 'chat' ? `已解析 ${files.length} 个附件并写入企业知识库。` : ''}${buildAssistantReasoning(event.provider, event.model, {
                   deepThinking: shouldShowReasoning,
@@ -1798,6 +1810,9 @@ export function AgentStudio() {
         );
         if (finalEvent.context_usage) {
           setLatestContextUsage(finalEvent.context_usage as ContextUsage);
+        }
+        if (finalEvent.context_pack_summary) {
+          setLatestContextSummary(finalEvent.context_pack_summary as string);
         }
         setConversationId(finalEvent.conversation_id);
         localStorage.setItem(conversationStorageKey(activeProjectId, finalEvent.conversation_id), finalEvent.conversation_id);
@@ -2854,7 +2869,7 @@ export function AgentStudio() {
                       <ContextCacheUsage />
                     </ContextContentBody>
                     <ContextContentFooter>
-                      仅显示最近一次模型请求的估算上下文用量。
+                      {latestContextSummary ? `已纳入：${latestContextSummary}` : '仅显示最近一次模型请求的估算上下文用量。'}
                     </ContextContentFooter>
                   </ContextContent>
                 </Context>
@@ -3198,6 +3213,14 @@ const ChatBubble: React.FC<{
         )}
         {message.content && (
           <MessageResponse className="max-w-none">{message.content}</MessageResponse>
+        )}
+        {message.pendingAction && (
+          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
+            <div className="font-semibold">{message.pendingAction.title}</div>
+            {message.pendingAction.summary && (
+              <div className="mt-1 text-amber-800/90 dark:text-amber-100/80">{message.pendingAction.summary}</div>
+            )}
+          </div>
         )}
         {message.status === 'streaming' && (
           message.content || message.phaseTwoExecution || message.sourceDiscoveryExecution || message.articleDraftExecution

@@ -386,6 +386,53 @@ function createSchema(database) {
       value TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+      project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+      intent TEXT,
+      status TEXT NOT NULL,
+      provider TEXT,
+      model TEXT,
+      network_mode TEXT,
+      token_usage_json TEXT,
+      artifact_type TEXT,
+      artifact_id TEXT,
+      error_message TEXT,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation_created
+      ON agent_runs(conversation_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_project_created
+      ON agent_runs(project_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS agent_steps (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+      step_index INTEGER NOT NULL,
+      step_type TEXT NOT NULL,
+      tool_name TEXT,
+      status TEXT NOT NULL,
+      title TEXT,
+      input_json TEXT,
+      output_json TEXT,
+      artifact_type TEXT,
+      artifact_id TEXT,
+      error_message TEXT,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_steps_run_index
+      ON agent_steps(run_id, step_index);
   `);
   migrateSchema(database);
 }
@@ -588,6 +635,55 @@ function migrateSchema(database) {
   if (!msgTableColumnNames.has('content_type')) {
     database.exec("ALTER TABLE messages ADD COLUMN content_type TEXT DEFAULT 'text'");
   }
+
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+      project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+      intent TEXT,
+      status TEXT NOT NULL,
+      provider TEXT,
+      model TEXT,
+      network_mode TEXT,
+      token_usage_json TEXT,
+      artifact_type TEXT,
+      artifact_id TEXT,
+      error_message TEXT,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_conversation_created
+      ON agent_runs(conversation_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_project_created
+      ON agent_runs(project_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS agent_steps (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+      step_index INTEGER NOT NULL,
+      step_type TEXT NOT NULL,
+      tool_name TEXT,
+      status TEXT NOT NULL,
+      title TEXT,
+      input_json TEXT,
+      output_json TEXT,
+      artifact_type TEXT,
+      artifact_id TEXT,
+      error_message TEXT,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_steps_run_index
+      ON agent_steps(run_id, step_index);
+  `);
 }
 
 module.exports = {
