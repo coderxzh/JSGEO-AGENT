@@ -157,6 +157,7 @@ function listKnowledgeProfiles() {
       GROUP BY project_id
     ) entry_counts ON entry_counts.project_id = p.id
     WHERE p.status = 'active'
+      AND (ep.project_id IS NOT NULL OR COALESCE(entry_counts.entry_count, 0) > 0)
     ORDER BY datetime(p.updated_at) DESC, datetime(p.created_at) DESC
   `).all();
 

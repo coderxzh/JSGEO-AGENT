@@ -961,12 +961,16 @@ async function confirmKnowledgeDraft(payload = {}) {
   `).run({ id: draftId, project_id: projectId, updated_at: nowIso() });
 
   for (const asset of draftAssets) {
-    await createKnowledgeAsset({
-      project_id: projectId,
-      filename: asset.filename,
-      content_type: asset.content_type,
-      content_base64: asset.content_base64,
-    });
+    try {
+      await createKnowledgeAsset({
+        project_id: projectId,
+        filename: asset.filename,
+        content_type: asset.content_type,
+        content_base64: asset.content_base64,
+      });
+    } catch (assetError) {
+      console.warn('[knowledge] failed to create asset during confirm:', asset.filename, assetError?.message || assetError);
+    }
   }
 
   const refreshed = getKnowledgeProfile(projectId);
@@ -1532,10 +1536,187 @@ function createFailedDraftResponse({ draftId, payload, assets, documents, messag
   };
 }
 
+function createProcessingDraft(payload = {}, options = {}) {
+  const db = getDb();
+  const timestamp = options.timestamp || nowIso();
+  const draftId = options.draftId || payload.processing_draft_id || crypto.randomUUID();
+  const projectId = projectExists(payload.project_id) ? payload.project_id : null;
+  const profile = normalizeProfile({ project_id: payload.project_id || null });
+  const assets = draftAssetsForStorage(payload.assets || []);
+  const existing = db.prepare('SELECT id FROM knowledge_drafts WHERE id = ?').get(draftId);
+  const data = {
+    id: draftId,
+    project_id: projectId,
+    conversation_id: payload.conversation_id || null,
+    input_text: normalizeText(payload.message),
+    facts_json: jsonString([]),
+    field_reviews_json: jsonString([]),
+    profile_json: jsonString(profile),
+    source_quotes_json: jsonString([]),
+    assets_json: jsonString(assets),
+    warnings_json: jsonString([]),
+    error_message: null,
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+
+  if (existing) {
+    db.prepare(`
+      UPDATE knowledge_drafts
+      SET project_id = @project_id,
+          conversation_id = @conversation_id,
+          status = 'processing',
+          input_text = @input_text,
+          facts_json = @facts_json,
+          field_reviews_json = @field_reviews_json,
+          profile_json = @profile_json,
+          source_quotes_json = @source_quotes_json,
+          assets_json = @assets_json,
+          warnings_json = @warnings_json,
+          error_message = @error_message,
+          updated_at = @updated_at
+      WHERE id = @id
+    `).run(data);
+  } else {
+    db.prepare(`
+      INSERT INTO knowledge_drafts (
+        id, project_id, conversation_id, status, input_text, facts_json, field_reviews_json,
+        profile_json, source_quotes_json, assets_json, warnings_json, error_message, created_at, updated_at
+      )
+      VALUES (
+        @id, @project_id, @conversation_id, 'processing', @input_text, @facts_json, @field_reviews_json,
+        @profile_json, @source_quotes_json, @assets_json, @warnings_json, @error_message, @created_at, @updated_at
+      )
+    `).run(data);
+  }
+
+  return {
+    id: draftId,
+    intent: payload.intent || 'create',
+    project_id: projectId,
+    conversation_id: payload.conversation_id || null,
+    assistant_message_id: null,
+    status: 'processing',
+    profile,
+    facts: [],
+    field_reviews: [],
+    missing_fields: REQUIRED_FIELDS.map(([, label]) => label),
+    confidence: { mode: 'processing', fact_count: 0, average: 0 },
+    source_summary: {
+      text_length: normalizeText(payload.message).length,
+      asset_count: assets.length,
+      parsed_asset_count: 0,
+      failed_asset_count: 0,
+      fact_count: 0,
+      quote_count: 0,
+    },
+    source_quotes: [],
+    warnings: [],
+    error_message: null,
+    extraction_status: 'processing',
+    extraction_model: 'not-run',
+    assets,
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+}
+
+function updateStoredDraftFromResponse(draft, status = draft.status) {
+  const db = getDb();
+  const existing = db.prepare('SELECT assets_json FROM knowledge_drafts WHERE id = ?').get(draft.id);
+  const storedAssets = draftAssetsForStorage(draft.assets || []);
+  getDb().prepare(`
+    UPDATE knowledge_drafts
+    SET project_id = @project_id,
+        conversation_id = @conversation_id,
+        status = @status,
+        facts_json = @facts_json,
+        field_reviews_json = @field_reviews_json,
+        profile_json = @profile_json,
+        source_quotes_json = @source_quotes_json,
+        assets_json = @assets_json,
+        warnings_json = @warnings_json,
+        error_message = @error_message,
+        updated_at = @updated_at
+    WHERE id = @id
+  `).run({
+    id: draft.id,
+    project_id: projectExists(draft.project_id) ? draft.project_id : null,
+    conversation_id: draft.conversation_id || null,
+    status,
+    facts_json: jsonString(draft.facts || []),
+    field_reviews_json: jsonString(draft.field_reviews || []),
+    profile_json: jsonString(draft.profile || {}),
+    source_quotes_json: jsonString(draft.source_quotes || []),
+    assets_json: storedAssets.length ? jsonString(storedAssets) : existing?.assets_json || jsonString([]),
+    warnings_json: jsonString(draft.warnings || []),
+    error_message: draft.error_message || null,
+    updated_at: draft.updated_at || nowIso(),
+  });
+}
+
+function markInterruptedDrafts({ olderThanMs = 2 * 60 * 1000 } = {}) {
+  const db = getDb();
+  const cutoff = new Date(Date.now() - olderThanMs).toISOString();
+  const drafts = db.prepare(`
+    SELECT *
+    FROM knowledge_drafts
+    WHERE status = 'processing'
+      AND datetime(updated_at) <= datetime(?)
+  `).all(cutoff);
+  if (!drafts.length) {
+    return { ok: true, interrupted: 0 };
+  }
+  const result = db.prepare(`
+    UPDATE knowledge_drafts
+    SET status = 'interrupted',
+        error_message = COALESCE(error_message, '软件关闭或进程中断，知识库草稿未完成。'),
+        updated_at = @updated_at
+    WHERE status = 'processing'
+      AND datetime(updated_at) <= datetime(@cutoff)
+  `).run({ cutoff, updated_at: nowIso() });
+  const messageRows = db.prepare(`
+    SELECT *
+    FROM messages
+    WHERE metadata_json LIKE ?
+  `);
+  const updateMessage = db.prepare(`
+    UPDATE messages
+    SET content = @content,
+        metadata_json = @metadata_json
+    WHERE id = @id
+  `);
+  for (const draft of drafts) {
+    const rows = messageRows.all(`%${draft.id}%`);
+    for (const row of rows) {
+      const metadata = parseJson(row.metadata_json, {});
+      if (metadata.type !== 'knowledge_draft_task' || metadata.draft?.id !== draft.id) {
+        continue;
+      }
+      updateMessage.run({
+        id: row.id,
+        content: '上次知识库草稿生成未完成，可重新上传资料或粘贴原始资料后再生成。',
+        metadata_json: jsonString({
+          ...metadata,
+          status: 'interrupted',
+          draft: {
+            ...(metadata.draft || {}),
+            status: 'interrupted',
+            error_message: metadata.draft?.error_message || '软件关闭或进程中断，知识库草稿未完成。',
+          },
+          confirmation_state: 'output-available',
+        }),
+      });
+    }
+  }
+  return { ok: true, interrupted: result.changes };
+}
+
 async function createKnowledgeDraftStrict(payload = {}, onEvent = null) {
   const db = getDb();
-  const draftId = crypto.randomUUID();
+  const draftId = payload.processing_draft_id || crypto.randomUUID();
   const timestamp = nowIso();
+  createProcessingDraft(payload, { draftId, timestamp });
 
   onEvent?.({ type: 'status', step_index: 0, message: '正在解析上传资料...', can_proceed: false });
   const parsedAssets = await parseAssets(payload.assets || []);
@@ -1553,6 +1734,7 @@ async function createKnowledgeDraftStrict(payload = {}, onEvent = null) {
       ? `资料解析失败：${assets.filter((asset) => asset.status === 'failed').map((asset) => `${asset.filename}: ${asset.error_message}`).join('；')}`
       : '未解析到可用于建库的企业资料。请上传 DOCX/TXT/Markdown，或粘贴完整企业资料。';
     const failedDraft = createFailedDraftResponse({ draftId, payload, assets, documents, messageText, errorMessage, timestamp });
+    updateStoredDraftFromResponse(failedDraft, 'failed');
     onEvent?.({ type: 'error', error: errorMessage, draft: failedDraft, can_proceed: false });
     return failedDraft;
   }
@@ -1582,6 +1764,7 @@ async function createKnowledgeDraftStrict(payload = {}, onEvent = null) {
   } catch (error) {
     const errorMessage = normalizeDraftError(error, '知识库抽取模型调用失败');
     const failedDraft = createFailedDraftResponse({ draftId, payload, assets, documents, messageText, errorMessage, timestamp });
+    updateStoredDraftFromResponse(failedDraft, 'failed');
     onEvent?.({ type: 'error', error: errorMessage, draft: failedDraft, can_proceed: false });
     return failedDraft;
   }
@@ -1597,6 +1780,7 @@ async function createKnowledgeDraftStrict(payload = {}, onEvent = null) {
       ? '模型返回结果缺少有效企业字段，请补充更完整的企业资料后重试。'
       : '模型未抽取到可追溯的企业事实，请补充更完整的企业资料后重试。';
     const failedDraft = createFailedDraftResponse({ draftId, payload, assets, documents, messageText, errorMessage, timestamp, extraction });
+    updateStoredDraftFromResponse(failedDraft, 'failed');
     onEvent?.({ type: 'error', error: errorMessage, draft: failedDraft, can_proceed: false });
     return failedDraft;
   }
@@ -1623,29 +1807,6 @@ async function createKnowledgeDraftStrict(payload = {}, onEvent = null) {
     step_index: 2,
     message: `已抽取 ${facts.length} 条可追溯事实，正在生成字段核对草稿...`,
     can_proceed: false,
-  });
-
-  db.prepare(`
-    INSERT INTO knowledge_drafts (
-      id, project_id, status, input_text, facts_json, field_reviews_json,
-      profile_json, source_quotes_json, assets_json, warnings_json, created_at, updated_at
-    )
-    VALUES (
-      @id, @project_id, 'pending', @input_text, @facts_json, @field_reviews_json,
-      @profile_json, @source_quotes_json, @assets_json, @warnings_json, @created_at, @updated_at
-    )
-  `).run({
-    id: draftId,
-    project_id: projectExists(payload.project_id) ? payload.project_id : null,
-    input_text: inputText,
-    facts_json: jsonString(facts),
-    field_reviews_json: jsonString(fieldReviews),
-    profile_json: jsonString(profile),
-    source_quotes_json: jsonString(sourceQuotes),
-    assets_json: jsonString(draftAssetsForStorage(payload.assets)),
-    warnings_json: jsonString(warnings),
-    created_at: timestamp,
-    updated_at: timestamp,
   });
 
   const draft = {
@@ -1677,6 +1838,7 @@ async function createKnowledgeDraftStrict(payload = {}, onEvent = null) {
     created_at: timestamp,
     updated_at: timestamp,
   };
+  updateStoredDraftFromResponse(draft, 'pending');
 
   onEvent?.({
     type: 'draft_section',
@@ -1711,10 +1873,12 @@ module.exports = {
   createKnowledgeAsset,
   createKnowledgeDraft: createKnowledgeDraftStrict,
   createKnowledgeEntry,
+  createProcessingDraft,
   deleteKnowledgeAsset,
   getKnowledgeEntries: listEntries,
   getKnowledgeIndexStatus: getIndexStatus,
   getKnowledgeProfile,
+  markInterruptedDrafts,
   reparseKnowledgeAsset,
   reindexKnowledge,
   rejectKnowledgeDraft,

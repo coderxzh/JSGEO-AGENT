@@ -155,6 +155,7 @@ contextBridge.exposeInMainWorld('geoAgent', {
   rejectEvolutionRule: (ruleId) => ipcRenderer.invoke('geo-agent:reject-evolution-rule', ruleId),
   listEvolutionRules: (projectId, filters) => ipcRenderer.invoke('geo-agent:list-evolution-rules', projectId, filters || {}),
   getConversations: (projectId, limit) => ipcRenderer.invoke('geo-agent:get-conversations', { projectId: projectId || null, limit }),
+  getRecoverableDraftConversations: (limit) => ipcRenderer.invoke('geo-agent:get-recoverable-draft-conversations', { limit }),
   getPublicConversations: (limit) => ipcRenderer.invoke('geo-agent:get-public-conversations', { limit }),
   getConversation: (conversationId) => ipcRenderer.invoke('geo-agent:get-conversation', conversationId),
   touchConversationSummary: (conversationId, reason = 'manual') => ipcRenderer.invoke('geo-agent:touch-conversation-summary', { conversationId, reason }),

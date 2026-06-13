@@ -209,8 +209,10 @@ function projectIdFromGeoProjectId(geoProjectId) {
 }
 
 function prepareKnowledgeDraftContext(payload = {}) {
-  let projectId = payload.project_id || payload.projectId || null;
   const intent = payload.intent || 'create';
+  let projectId = intent === 'create' && !payload.reuse_draft_project
+    ? null
+    : payload.project_id || payload.projectId || null;
   const shouldCreateProject = intent === 'create' && !projectId;
   if (shouldCreateProject) {
     const project = projectService.createProject({
@@ -564,15 +566,31 @@ function registerHandlers() {
     const requestId = request.requestId;
     const payload = request.payload || {};
     const channel = `geo-agent:create-knowledge-draft-stream:${requestId}`;
+    const isCreateIntent = (payload.intent || 'create') === 'create';
+    const canReuseDraftConversation = isCreateIntent
+      && payload.conversation_id
+      && conversationService.canReuseDraftConversationForCreate(payload.conversation_id);
+    if (isCreateIntent) {
+      payload.reuse_draft_project = Boolean(canReuseDraftConversation);
+      if (!canReuseDraftConversation) {
+        payload.conversation_id = null;
+        payload.project_id = null;
+        payload.projectId = null;
+      }
+    }
     const context = prepareKnowledgeDraftContext(payload);
     const projectId = context.projectId;
     let conversation = null;
     let draftMessage = null;
+    let processingDraft = null;
+    let processingMessage = null;
     try {
       if (true) {
         // 尝试复用最近的 geo_workflow 会话；没有则创建新的会话。
-        let effectiveConversationId = context.shouldCreateProject ? null : payload.conversation_id || null;
-        if (!effectiveConversationId && projectId) {
+        let effectiveConversationId = isCreateIntent
+          ? (canReuseDraftConversation ? payload.conversation_id : null)
+          : payload.conversation_id || null;
+        if (!effectiveConversationId && projectId && !isCreateIntent) {
           const latest = conversationService.findLatestConversation(projectId, 'geo_workflow');
           if (latest) {
             effectiveConversationId = latest.id;
@@ -603,28 +621,57 @@ function registerHandlers() {
             asset_count: Array.isArray(payload.assets) ? payload.assets.length : 0,
           },
         });
+        processingDraft = knowledgeService.createProcessingDraft(payload);
+        payload.processing_draft_id = processingDraft.id;
+        processingMessage = conversationService.addMessage({
+          conversationId: conversation.id,
+          projectId,
+          role: 'assistant',
+          content: '正在生成企业知识库草稿。若软件关闭或流程中断，可稍后在对话历史中恢复该任务。',
+          metadata: {
+            type: 'knowledge_draft_task',
+            draft: processingDraft,
+            status: 'processing',
+            confirmation_state: 'approval-responded',
+          },
+        });
         event.sender.send(channel, {
           type: 'meta',
           task: 'knowledge_extraction',
           conversation_id: conversation.id,
           project_id: projectId,
+          draft: processingDraft,
+          message: processingMessage,
           can_proceed: false,
         });
       }
-      event.sender.send(channel, { type: 'meta', task: 'knowledge_extraction', project_id: projectId, can_proceed: false });
       const draft = await knowledgeService.createKnowledgeDraft(payload, (streamEvent) => {
         event.sender.send(channel, streamEvent);
       });
       if (draft.extraction_status === 'failed' || draft.status === 'failed') {
         const error = draft.error_message || draft.warnings?.[0] || '知识库草稿创建失败。';
+        if (processingMessage && conversation) {
+          draftMessage = conversationService.updateConversationMessage({
+            messageId: processingMessage.id,
+            conversationId: conversation.id,
+            projectId,
+            content: error,
+            metadata: {
+              type: 'knowledge_draft_task',
+              draft: { ...draft, conversation_id: conversation.id },
+              status: 'failed',
+              confirmation_state: 'output-available',
+            },
+          });
+        }
         event.sender.send(channel, { type: 'error', error, draft, can_proceed: false });
         return { type: 'error', error, draft, can_proceed: false };
       }
       if (conversation) {
-        draftMessage = conversationService.addMessage({
+        const messagePayload = {
+          messageId: processingMessage?.id,
           conversationId: conversation.id,
           projectId,
-          role: 'assistant',
           content: '已根据资料生成企业知识库草稿。请核对字段和来源片段，确认后再正式建立知识库。',
           metadata: {
             type: 'knowledge_draft',
@@ -632,13 +679,34 @@ function registerHandlers() {
             status: 'complete',
             confirmation_state: 'approval-requested',
           },
-        });
+        };
+        draftMessage = processingMessage
+          ? conversationService.updateConversationMessage(messagePayload)
+          : conversationService.addMessage({ ...messagePayload, role: 'assistant' });
         draft.conversation_id = conversation.id;
       }
       event.sender.send(channel, { type: 'done', draft, conversation_id: conversation?.id, project_id: projectId, message: draftMessage, can_proceed: true });
       return { type: 'done', draft, conversation_id: conversation?.id, project_id: projectId, message: draftMessage, can_proceed: true };
     } catch (error) {
       const message = error.message || String(error);
+      if (processingMessage && conversation) {
+        try {
+          conversationService.updateConversationMessage({
+            messageId: processingMessage.id,
+            conversationId: conversation.id,
+            projectId,
+            content: message,
+            metadata: {
+              type: 'knowledge_draft_task',
+              draft: processingDraft ? { ...processingDraft, status: 'failed', error_message: message } : null,
+              status: 'failed',
+              confirmation_state: 'output-available',
+            },
+          });
+        } catch {
+          // 保留原始错误返回；恢复消息更新失败不应吞掉主错误。
+        }
+      }
       event.sender.send(channel, { type: 'error', error: message, can_proceed: false });
       return { type: 'error', error: message, can_proceed: false };
     }
@@ -740,12 +808,22 @@ function registerHandlers() {
   ipcMain.handle('geo-agent:apply-knowledge-diff', async (_event, payload = {}) =>
     knowledgeService.applyDraftDiff(payload));
 
-  ipcMain.handle('geo-agent:get-conversations', async (_event, payload = {}) =>
-    conversationService.listConversations(payload.projectId || payload.project_id || null, payload.limit, {
+  ipcMain.handle('geo-agent:get-conversations', async (_event, payload = {}) => {
+    knowledgeService.markInterruptedDrafts();
+    return conversationService.listConversations(payload.projectId || payload.project_id || null, payload.limit, {
       reason: payload.reason || 'history_open',
-    }));
-  ipcMain.handle('geo-agent:get-public-conversations', async (_event, payload = {}) =>
-    conversationService.listPublicConversations(payload.limit));
+    });
+  });
+  ipcMain.handle('geo-agent:get-recoverable-draft-conversations', async (_event, payload = {}) => {
+    knowledgeService.markInterruptedDrafts();
+    return conversationService.listRecoverableDraftConversations(payload.limit, {
+      reason: payload.reason || 'history_open',
+    });
+  });
+  ipcMain.handle('geo-agent:get-public-conversations', async (_event, payload = {}) => {
+    knowledgeService.markInterruptedDrafts();
+    return conversationService.listPublicConversations(payload.limit);
+  });
   ipcMain.handle('geo-agent:get-geo-projects', async () => ({ projects: [] }));
   ipcMain.handle('geo-agent:ensure-geo-project', async (_event, projectId) => createShellGeoProject(projectId));
   ipcMain.handle('geo-agent:get-geo-project', async (_event, geoProjectId) => createShellGeoProject(geoProjectId));
@@ -1772,6 +1850,7 @@ process.on('unhandledRejection', (reason, promise) => {
 
 app.whenReady().then(async () => {
   initializeDatabaseForCurrentUser();
+  knowledgeService.markInterruptedDrafts({ olderThanMs: 0 });
   await createWindow();
 });
 

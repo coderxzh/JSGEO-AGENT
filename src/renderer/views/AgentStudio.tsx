@@ -918,6 +918,8 @@ export function AgentStudio() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversationProjectId, setConversationProjectId] = useState<string | null>(null);
+  const [canReuseDraftConversation, setCanReuseDraftConversation] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [configStatus, setConfigStatus] = useState<ConfigStatus | null>(null);
   const [geoProject, setGeoProject] = useState<GeoAgentGeoProject | null>(null);
@@ -930,6 +932,21 @@ export function AgentStudio() {
   const [conversationHistory, setConversationHistory] = useState<Array<{
     id: string;
     project_id?: string | null;
+    is_recoverable_draft?: boolean;
+    can_reuse_draft_conversation?: boolean;
+    kind: string;
+    title: string;
+    summary?: string | null;
+    message_count: number;
+    last_message_preview?: string | null;
+    created_at: string;
+    updated_at: string;
+  }>>([]);
+  const [draftConversationHistory, setDraftConversationHistory] = useState<Array<{
+    id: string;
+    project_id?: string | null;
+    is_recoverable_draft?: boolean;
+    can_reuse_draft_conversation?: boolean;
     kind: string;
     title: string;
     summary?: string | null;
@@ -958,6 +975,7 @@ export function AgentStudio() {
 
   const inputShellRef = useRef<HTMLDivElement | null>(null);
   const openConversationRequestRef = useRef(0);
+  const visibleConversationIdRef = useRef<string | null>(null);
   const phaseTwoPromptInFlightRef = useRef<Set<string>>(new Set());
   const stageInFlightRef = useRef<Set<string>>(new Set());
   const typewriterQueuesRef = useRef<Record<string, Promise<void>>>({});
@@ -978,6 +996,16 @@ export function AgentStudio() {
   useEffect(() => {
     localStorage.setItem(CONVERSATION_HISTORY_RESET_KEY, 'done');
     setIsConversationHistoryResetting(false);
+  }, []);
+
+  useEffect(() => {
+    visibleConversationIdRef.current = conversationId;
+  }, [conversationId]);
+
+  useEffect(() => {
+    return () => {
+      typewriterQueuesRef.current = {};
+    };
   }, []);
 
   const refreshWorkflowState = async (geoProjectId = geoProject?.id) => {
@@ -1025,6 +1053,13 @@ export function AgentStudio() {
       window.geoAgent!.getConversations(currentEnterprise?.id)
         .then((response) => setConversationHistory(response.conversations ?? []))
         .catch(() => setConversationHistory([]));
+      if (window.geoAgent?.getRecoverableDraftConversations) {
+        window.geoAgent.getRecoverableDraftConversations(20)
+          .then((response) => setDraftConversationHistory(response.conversations ?? []))
+          .catch(() => setDraftConversationHistory([]));
+      } else {
+        setDraftConversationHistory([]);
+      }
     };
 
     fetchConversations();
@@ -1095,7 +1130,10 @@ export function AgentStudio() {
 
     if (isEnterpriseSwitch) {
       openConversationRequestRef.current += 1;
+      visibleConversationIdRef.current = null;
       setConversationId(null);
+      setConversationProjectId(null);
+      setCanReuseDraftConversation(false);
       setMessages([]);
       setInputValue('');
       setSelectedSkill(null);
@@ -1111,7 +1149,10 @@ export function AgentStudio() {
       });
       return;
     }
+    visibleConversationIdRef.current = null;
     setConversationId(null);
+    setConversationProjectId(null);
+    setCanReuseDraftConversation(false);
     setMessages([]);
   }, [currentConversationStorageKey, isConversationHistoryResetting]);
 
@@ -1204,6 +1245,10 @@ export function AgentStudio() {
     const rawContent = (text ?? inputValue).trim();
     const knowledgeIntent = inferKnowledgeIntent(rawContent, hasFiles, isKnowledgeIngestSkill);
     const shouldUseDispatcher = (hasFiles && knowledgeIntent !== 'chat') || isKnowledgeIngestSkill;
+    const recoverableProjectId = canReuseDraftConversation && conversationProjectId && conversationProjectId !== currentEnterprise?.id
+      ? conversationProjectId
+      : null;
+    const shouldStartSeparateKnowledgeConversation = knowledgeIntent === 'create' && !recoverableProjectId;
     const content = rawContent
       || (hasFiles && knowledgeIntent !== 'chat' ? `已上传 ${files.length} 个附件，请解析并写入企业知识库。` : '')
       || (hasFiles && knowledgeIntent === 'chat' ? `我上传了 ${files.length} 个文件，请帮我分析。` : '')
@@ -1275,11 +1320,20 @@ export function AgentStudio() {
     setInputValue('');
     setSelectedSkill(null);
     setIsSending(true);
-    setMessages((current) => [
-      ...current,
-      userMessage,
-      assistantMessage,
-    ]);
+    if (shouldStartSeparateKnowledgeConversation) {
+      openConversationRequestRef.current += 1;
+      visibleConversationIdRef.current = null;
+      setConversationId(null);
+      setConversationProjectId(null);
+      setCanReuseDraftConversation(false);
+    }
+    setMessages((current) => shouldStartSeparateKnowledgeConversation
+      ? [userMessage, assistantMessage]
+      : [
+        ...current,
+        userMessage,
+        assistantMessage,
+      ]);
 
     try {
       if (!window.geoAgent) {
@@ -1287,7 +1341,7 @@ export function AgentStudio() {
       }
 
       let activeProjectId = knowledgeIntent === 'create'
-        ? undefined
+        ? recoverableProjectId || undefined
         : hasEnterprises ? currentEnterprise.id : undefined;
 
       // 判断是否应该进入知识库创建/更新流程
@@ -1317,9 +1371,10 @@ export function AgentStudio() {
         const assets = await Promise.all(files.map(filePartToKnowledgeAsset));
         const draftPayload = {
           message: content,
-          conversation_id: knowledgeIntent === 'create' ? null : conversationId,
+          conversation_id: knowledgeIntent === 'create' && !recoverableProjectId ? null : conversationId,
           intent: knowledgeIntent,
           project_id: activeProjectId,
+          reuse_draft_project: knowledgeIntent === 'create' && Boolean(recoverableProjectId),
           skill_id: activeSkill?.id,
           assets,
         };
@@ -1329,14 +1384,12 @@ export function AgentStudio() {
           const enqueueKnowledgeTask = (task: () => Promise<void> | void) => enqueueTypewriterTask(typewriterQueuesRef, assistantId, task);
           const finalEvent = await window.geoAgent.createKnowledgeDraftStream(draftPayload, (event) => {
             if (event.type === 'meta' && event.conversation_id) {
+              visibleConversationIdRef.current = event.conversation_id;
               setConversationId(event.conversation_id);
+              setConversationProjectId(event.project_id || draftPayload.project_id || null);
+              setCanReuseDraftConversation(false);
               localStorage.setItem(conversationStorageKey(event.project_id || draftPayload.project_id || null, event.conversation_id), event.conversation_id);
               window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: event.conversation_id } }));
-              if (knowledgeIntent === 'create' && event.project_id) {
-                skipNextConversationAutoRestoreRef.current = true;
-                setEnterpriseId(event.project_id);
-                refreshEnterprises().catch(() => undefined);
-              }
               if (knowledgeIntent === 'create') {
                 setMessages((current) => {
                   const currentAssistant = current.find((message) => message.id === assistantId) || assistantMessage;
@@ -1448,16 +1501,17 @@ export function AgentStudio() {
           draftFinalEvent = finalEvent;
           draft = finalEvent.draft;
           if (finalEvent.conversation_id) {
-            setConversationId(finalEvent.conversation_id);
             localStorage.setItem(conversationStorageKey(draft.project_id || null, finalEvent.conversation_id), finalEvent.conversation_id);
-            window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: finalEvent.conversation_id } }));
-            if (knowledgeIntent === 'create' && draft.project_id) {
-              skipNextConversationAutoRestoreRef.current = true;
-              setEnterpriseId(draft.project_id);
-              refreshEnterprises().catch(() => undefined);
+            if (visibleConversationIdRef.current === finalEvent.conversation_id) {
+              setConversationId(finalEvent.conversation_id);
+              setConversationProjectId(draft.project_id || null);
+              setCanReuseDraftConversation(false);
+              window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: finalEvent.conversation_id } }));
+            } else {
+              window.dispatchEvent(new CustomEvent('geo-agent-conversations-refresh'));
             }
           }
-          if (finalEvent.message) {
+          if (finalEvent.message && visibleConversationIdRef.current === finalEvent.conversation_id) {
             setMessages((current) => {
               const restored = restoreConversationMessage(finalEvent.message!);
               const previous = current.find((item) => item.id === assistantId);
@@ -1493,13 +1547,14 @@ export function AgentStudio() {
           return;
         }
         if (draft.conversation_id) {
-          setConversationId(draft.conversation_id);
           localStorage.setItem(conversationStorageKey(draft.project_id, draft.conversation_id), draft.conversation_id);
-          window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: draft.conversation_id } }));
-          if (knowledgeIntent === 'create' && draft.project_id) {
-            skipNextConversationAutoRestoreRef.current = true;
-            setEnterpriseId(draft.project_id);
-            refreshEnterprises().catch(() => undefined);
+          if (visibleConversationIdRef.current === draft.conversation_id) {
+            setConversationId(draft.conversation_id);
+            setConversationProjectId(draft.project_id || null);
+            setCanReuseDraftConversation(false);
+            window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: draft.conversation_id } }));
+          } else {
+            window.dispatchEvent(new CustomEvent('geo-agent-conversations-refresh'));
           }
         }
         const draftMessageId = draftFinalEvent?.message?.id || assistantId;
@@ -2352,7 +2407,10 @@ export function AgentStudio() {
         .catch(() => undefined);
     }
     openConversationRequestRef.current += 1;
+    visibleConversationIdRef.current = null;
     setConversationId(null);
+    setConversationProjectId(null);
+    setCanReuseDraftConversation(false);
     setMessages([]);
     setInputValue('');
     setSelectedSkill(null);
@@ -2366,27 +2424,47 @@ export function AgentStudio() {
     if (!window.geoAgent?.getConversation) {
       return;
     }
+    if (nextConversationId === conversationId) {
+      return;
+    }
     const requestId = openConversationRequestRef.current + 1;
     openConversationRequestRef.current = requestId;
+    visibleConversationIdRef.current = nextConversationId;
     const response = await window.geoAgent.getConversation(nextConversationId);
     if (requestId !== openConversationRequestRef.current) {
       return;
     }
-    if (response.conversation.project_id && currentEnterprise?.id && response.conversation.project_id !== currentEnterprise.id) {
-      localStorage.removeItem(conversationStorageKey(currentEnterprise.id));
-      clearConversationStorageById(response.conversation.id);
-      setConversationId(null);
-      setMessages([]);
-      return;
+    const isRecoverableKnowledgeConversation = Boolean(response.conversation.is_recoverable_draft);
+    if (response.conversation.project_id && currentEnterprise?.id && response.conversation.project_id !== currentEnterprise.id && !isRecoverableKnowledgeConversation) {
+      const isEnterpriseSwitchInFlight = prevEnterpriseIdRef.current != null
+        && prevEnterpriseIdRef.current !== currentEnterprise?.id;
+      if (!isEnterpriseSwitchInFlight) {
+        localStorage.removeItem(conversationStorageKey(currentEnterprise.id));
+        clearConversationStorageById(response.conversation.id);
+        setConversationId(null);
+        setConversationProjectId(null);
+        setCanReuseDraftConversation(false);
+        setMessages([]);
+        window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: null } }));
+        return;
+      }
     }
     const restoredMessages = response.messages
       .filter((message) => message.role === 'user' || message.role === 'assistant')
       .map((message) => restoreConversationMessage(message));
     setConversationId(response.conversation.id);
+    setConversationProjectId(response.conversation.project_id || null);
+    setCanReuseDraftConversation(Boolean(response.conversation.can_reuse_draft_conversation));
+    visibleConversationIdRef.current = response.conversation.id;
     setMessages(normalizeRestoredWorkflowMessages(restoredMessages));
     setInputValue('');
     setSelectedSkill(null);
-    localStorage.setItem(options?.storageKey ?? conversationStorageKey(response.conversation.project_id ?? currentEnterprise?.id, response.conversation.id), response.conversation.id);
+    const projectKey = options?.storageKey ?? conversationStorageKey(response.conversation.project_id ?? currentEnterprise?.id);
+    const conversationKey = conversationStorageKey(response.conversation.project_id ?? currentEnterprise?.id, response.conversation.id);
+    localStorage.setItem(projectKey, response.conversation.id);
+    if (projectKey !== conversationKey) {
+      localStorage.setItem(conversationKey, response.conversation.id);
+    }
     if (!options?.silent) {
       window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: response.conversation.id } }));
     }
@@ -2707,18 +2785,28 @@ export function AgentStudio() {
           >
             <ConversationHistoryPanel
               conversations={conversationHistory}
+              draftConversations={draftConversationHistory}
               currentConversationId={conversationId}
               onSelectConversation={(id) => {
+                if (id === conversationId) {
+                  setIsHistoryOpen(false);
+                  return;
+                }
                 openConversation(id);
                 setIsHistoryOpen(false);
               }}
               onDeleteConversation={(id) => {
                 if (window.geoAgent?.deleteConversation) {
                   window.geoAgent.deleteConversation(id).then(() => {
+                    clearConversationStorageById(id);
                     setConversationHistory((prev) => prev.filter((c) => c.id !== id));
+                    setDraftConversationHistory((prev) => prev.filter((c) => c.id !== id));
+                    window.dispatchEvent(new CustomEvent('geo-agent-conversation-deleted', { detail: { id } }));
                     if (id === conversationId) {
                       startNewConversation({ silent: true });
                     }
+                  }).catch(() => {
+                    // 删除失败时静默处理，数据库中的对话记录保留
                   });
                 }
               }}
@@ -4030,6 +4118,25 @@ function restoreConversationMessage(message: GeoAgentConversationMessage): ChatM
       confirmationApproved: typeof metadata.confirmation_approved === 'boolean'
         ? metadata.confirmation_approved
         : undefined,
+    };
+  }
+
+  if (message.role === 'assistant' && metadata.type === 'knowledge_draft_task') {
+    const draft = metadata.draft as GeoAgentKnowledgeDraft | undefined;
+    const status = draft?.status || metadata.status;
+    const failed = status === 'failed' || status === 'interrupted';
+    return {
+      ...baseMessage,
+      content: failed
+        ? (draft?.error_message || message.content || '上次知识库草稿生成未完成，可重新上传资料或粘贴原始资料后再生成。')
+        : (message.content || '知识库草稿生成任务正在处理中。'),
+      reasoning: status === 'interrupted'
+        ? '上次软件关闭或流程中断，任务已保留在历史中。'
+        : undefined,
+      suggestions: failed
+        ? [{ label: '重新生成草稿', value: '请基于原始企业资料重新生成知识库草稿。', icon: Database, variant: 'default' }]
+        : undefined,
+      status: failed ? 'complete' as const : 'streaming' as const,
     };
   }
 

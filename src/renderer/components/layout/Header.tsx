@@ -200,8 +200,6 @@ export function Header({ currentView, isSidebarCollapsed }: HeaderProps) {
         window.dispatchEvent(new CustomEvent('geo-agent-conversations-refresh'));
       }
     } catch (error) {
-      clearConversationStorageById(conversationId);
-      window.dispatchEvent(new CustomEvent('geo-agent-conversation-deleted', { detail: { id: conversationId } }));
       console.error('Failed to delete conversation', error);
     }
   };

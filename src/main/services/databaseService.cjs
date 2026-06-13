@@ -75,6 +75,7 @@ function createSchema(database) {
     CREATE TABLE IF NOT EXISTS knowledge_drafts (
       id TEXT PRIMARY KEY,
       project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+      conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
       status TEXT NOT NULL,
       input_text TEXT,
       facts_json TEXT,
@@ -83,6 +84,7 @@ function createSchema(database) {
       source_quotes_json TEXT,
       assets_json TEXT,
       warnings_json TEXT,
+      error_message TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -458,6 +460,12 @@ function migrateSchema(database) {
   const draftExisting = new Set(draftColumns.map((column) => column.name));
   if (!draftExisting.has('assets_json')) {
     database.exec('ALTER TABLE knowledge_drafts ADD COLUMN assets_json TEXT');
+  }
+  if (!draftExisting.has('conversation_id')) {
+    database.exec('ALTER TABLE knowledge_drafts ADD COLUMN conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL');
+  }
+  if (!draftExisting.has('error_message')) {
+    database.exec('ALTER TABLE knowledge_drafts ADD COLUMN error_message TEXT');
   }
 
   database.exec(`

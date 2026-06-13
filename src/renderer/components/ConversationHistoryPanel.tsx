@@ -26,6 +26,7 @@ type ConversationSummary = {
 
 type ConversationHistoryPanelProps = {
   conversations: ConversationSummary[];
+  draftConversations?: ConversationSummary[];
   currentConversationId?: string | null;
   onSelectConversation: (conversationId: string) => void;
   onDeleteConversation?: (conversationId: string) => void;
@@ -84,6 +85,7 @@ function formatTime(dateString: string): string {
 
 export function ConversationHistoryPanel({
   conversations,
+  draftConversations = [],
   currentConversationId,
   onSelectConversation,
   onDeleteConversation,
@@ -106,6 +108,18 @@ export function ConversationHistoryPanel({
         conv.last_message_preview?.toLowerCase().includes(query)
     );
   }, [conversations, searchQuery]);
+
+  const filteredDraftConversations = useMemo(() => {
+    if (!searchQuery.trim()) return draftConversations;
+
+    const query = searchQuery.toLowerCase();
+    return draftConversations.filter(
+      (conv) =>
+        conv.title.toLowerCase().includes(query) ||
+        conv.summary?.toLowerCase().includes(query) ||
+        conv.last_message_preview?.toLowerCase().includes(query)
+    );
+  }, [draftConversations, searchQuery]);
 
   // 按时间分组
   const groupedConversations = useMemo(() => {
@@ -226,7 +240,7 @@ export function ConversationHistoryPanel({
 
       {/* 对话列表 */}
       <div className="flex-1 overflow-y-auto px-4 pb-4">
-        {filteredConversations.length === 0 ? (
+        {filteredConversations.length === 0 && filteredDraftConversations.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-12 text-on-surface-variant">
             <MessageSquare className="w-8 h-8 mb-3 opacity-50" />
             <p className="text-[13px]">
@@ -234,21 +248,34 @@ export function ConversationHistoryPanel({
             </p>
           </div>
         ) : (
-          (Object.entries(groupedConversations) as [string, ConversationSummary[]][]).map(([group, convs]) => {
-            if (convs.length === 0) return null;
-
-            return (
-              <div key={group} className="mb-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Clock className="w-3.5 h-3.5 text-on-surface-variant" />
-                  <span className="text-[12px] font-medium text-on-surface-variant">{group}</span>
+          <>
+            {filteredDraftConversations.length > 0 && (
+              <div className="mb-4">
+                <div className="mb-2 flex items-center gap-2">
+                  <MessageSquare className="h-3.5 w-3.5 text-on-surface-variant" />
+                  <span className="text-[12px] font-medium text-on-surface-variant">未归档建库任务</span>
                 </div>
                 <div className="flex flex-col gap-1">
-                  {convs.map(renderConversationItem)}
+                  {filteredDraftConversations.map(renderConversationItem)}
                 </div>
               </div>
-            );
-          })
+            )}
+            {(Object.entries(groupedConversations) as [string, ConversationSummary[]][]).map(([group, convs]) => {
+              if (convs.length === 0) return null;
+
+              return (
+                <div key={group} className="mb-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Clock className="w-3.5 h-3.5 text-on-surface-variant" />
+                    <span className="text-[12px] font-medium text-on-surface-variant">{group}</span>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    {convs.map(renderConversationItem)}
+                  </div>
+                </div>
+              );
+            })}
+          </>
         )}
       </div>
     </div>

@@ -120,6 +120,16 @@ function deriveConversationDisplayFields(row, messages = []) {
       result.display_preview = metadata.status === 'confirmed' ? '草稿已确认' : '待确认知识库草稿';
       return result;
     }
+    if (metadata.type === 'knowledge_draft_task') {
+      const status = metadata.draft?.status || metadata.status;
+      result.display_title = `${getCompanyNameFromMetadata(metadata) || companyName || '企业'}｜未完成知识库草稿`;
+      result.display_preview = status === 'interrupted'
+        ? '上次任务中断，可重新运行'
+        : status === 'failed'
+          ? '草稿生成失败，可重新运行'
+          : '知识库草稿正在处理或等待恢复';
+      return result;
+    }
   }
 
   const userMessage = ordered.find((message) => message.role === 'user' && !isTransientConversationText(message.content));
@@ -148,6 +158,8 @@ function rowToConversation(row) {
     summary_updated_at: row.summary_updated_at || null,
     summary_message_count: Number(row.summary_message_count || 0),
     summary_dirty: Boolean(row.summary_dirty),
+    is_recoverable_draft: Boolean(row.is_recoverable_draft),
+    can_reuse_draft_conversation: Boolean(row.can_reuse_draft_conversation),
     message_count: messageCount,
     last_message_preview: displayPreview || row.last_message_preview || null,
     last_message: displayPreview || row.last_message_preview || null,
@@ -189,6 +201,76 @@ function projectExists(projectId) {
 
 function getConversationRow(conversationId) {
   return getDb().prepare('SELECT * FROM conversations WHERE id = ?').get(conversationId);
+}
+
+function isRecoverableDraftConversation(conversationId) {
+  if (!conversationId) return false;
+  const row = getDb().prepare(`
+    SELECT c.id
+    FROM conversations c
+    LEFT JOIN enterprise_profiles ep ON ep.project_id = c.project_id
+    LEFT JOIN (
+      SELECT project_id, COUNT(*) AS entry_count
+      FROM knowledge_entries
+      GROUP BY project_id
+    ) entry_counts ON entry_counts.project_id = c.project_id
+    LEFT JOIN knowledge_drafts kd ON kd.conversation_id = c.id
+    WHERE c.id = ?
+      AND c.kind = 'geo_workflow'
+      AND c.project_id IS NOT NULL
+      AND ep.project_id IS NULL
+      AND COALESCE(entry_counts.entry_count, 0) = 0
+      AND (
+        kd.status IN ('processing', 'interrupted', 'pending', 'failed')
+        OR EXISTS (
+          SELECT 1
+          FROM messages m
+          WHERE m.conversation_id = c.id
+            AND m.metadata_json LIKE '%knowledge_draft_request%'
+        )
+      )
+    LIMIT 1
+  `).get(conversationId);
+  return Boolean(row);
+}
+
+function canReuseDraftConversationForCreate(conversationId) {
+  if (!conversationId) return false;
+  const row = getDb().prepare(`
+    SELECT c.id
+    FROM conversations c
+    LEFT JOIN enterprise_profiles ep ON ep.project_id = c.project_id
+    LEFT JOIN (
+      SELECT project_id, COUNT(*) AS entry_count
+      FROM knowledge_entries
+      GROUP BY project_id
+    ) entry_counts ON entry_counts.project_id = c.project_id
+    WHERE c.id = ?
+      AND c.kind = 'geo_workflow'
+      AND c.project_id IS NOT NULL
+      AND ep.project_id IS NULL
+      AND COALESCE(entry_counts.entry_count, 0) = 0
+      AND EXISTS (
+        SELECT 1
+        FROM knowledge_drafts kd
+        WHERE kd.conversation_id = c.id
+          AND kd.status IN ('interrupted', 'failed')
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM knowledge_drafts kd
+        WHERE kd.conversation_id = c.id
+          AND kd.status IN ('processing', 'pending')
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM messages m
+        WHERE m.conversation_id = c.id
+          AND m.metadata_json LIKE '%"type":"knowledge_draft"%'
+      )
+    LIMIT 1
+  `).get(conversationId);
+  return Boolean(row);
 }
 
 function ensureConversation({ projectId = null, conversationId = null, title = null, firstMessage = '', kind = 'chat' }) {
@@ -281,7 +363,12 @@ function bindConversationToProject(conversationId, projectId) {
 
 function updateConversationStats({ conversationId, preview, timestamp }) {
   const nextPreview = isTransientConversationText(preview) ? null : previewText(preview);
-  getDb().prepare(`
+  const db = getDb();
+  const row = db.prepare('SELECT message_count, summary_message_count FROM conversations WHERE id = ?').get(conversationId);
+  const newCount = row ? Number(row.message_count || 0) + 1 : 0;
+  const summarizedCount = row ? Number(row.summary_message_count || 0) : 0;
+  const shouldMarkDirty = newCount - summarizedCount >= Math.ceil(SUMMARY_MESSAGE_DELTA / 2);
+  db.prepare(`
     UPDATE conversations
     SET updated_at = @updated_at,
         message_count = (
@@ -290,12 +377,13 @@ function updateConversationStats({ conversationId, preview, timestamp }) {
           WHERE conversation_id = @conversation_id
         ),
         last_message_preview = @last_message_preview,
-        summary_dirty = 1
+        summary_dirty = @summary_dirty
     WHERE id = @conversation_id
   `).run({
     conversation_id: conversationId,
     updated_at: timestamp,
     last_message_preview: nextPreview,
+    summary_dirty: shouldMarkDirty ? 1 : 0,
   });
 }
 
@@ -564,6 +652,7 @@ function hydrateConversationRows(rows) {
 async function listConversations(projectId = null, limit = 40, options = {}) {
   const db = getDb();
   let rows;
+  const normalizedLimit = Number(limit || 40);
 
   if (projectId && !projectExists(projectId)) {
     return { conversations: [] };
@@ -577,7 +666,7 @@ async function listConversations(projectId = null, limit = 40, options = {}) {
       WHERE project_id = ?
       ORDER BY datetime(updated_at) DESC
       LIMIT ?
-    `).all(projectId, Number(limit || 40));
+    `).all(projectId, normalizedLimit);
   } else {
     // projectId 为 null 时，返回公共对话
     rows = db.prepare(`
@@ -586,7 +675,7 @@ async function listConversations(projectId = null, limit = 40, options = {}) {
       WHERE project_id IS NULL
       ORDER BY datetime(updated_at) DESC
       LIMIT ?
-    `).all(Number(limit || 40));
+    `).all(normalizedLimit);
   }
 
   const visibleRows = hydrateConversationRows(rows.filter((row) => !isPlaceholderOnlyConversation(row.id)));
@@ -594,6 +683,46 @@ async function listConversations(projectId = null, limit = 40, options = {}) {
   if (options.refreshSummaries !== false) {
     refreshStaleSummaries(visibleRows, options.reason || 'history_open').catch((error) => {
       console.warn('[conversation] background summary refresh failed', error?.message || error);
+    });
+  }
+  return { conversations: visibleRows.map(rowToConversation) };
+}
+
+async function listRecoverableDraftConversations(limit = 20, options = {}) {
+  const db = getDb();
+  const normalizedLimit = Number(limit || 20);
+  const rows = db.prepare(`
+    SELECT DISTINCT c.*, 1 AS is_recoverable_draft
+    FROM conversations c
+    LEFT JOIN enterprise_profiles ep ON ep.project_id = c.project_id
+    LEFT JOIN (
+      SELECT project_id, COUNT(*) AS entry_count
+      FROM knowledge_entries
+      GROUP BY project_id
+    ) entry_counts ON entry_counts.project_id = c.project_id
+    LEFT JOIN knowledge_drafts kd ON kd.conversation_id = c.id
+    WHERE c.kind = 'geo_workflow'
+      AND c.project_id IS NOT NULL
+      AND ep.project_id IS NULL
+      AND COALESCE(entry_counts.entry_count, 0) = 0
+      AND (
+        kd.status IN ('processing', 'interrupted', 'pending', 'failed')
+        OR EXISTS (
+          SELECT 1
+          FROM messages m
+          WHERE m.conversation_id = c.id
+            AND m.metadata_json LIKE '%knowledge_draft_request%'
+        )
+      )
+    ORDER BY datetime(c.updated_at) DESC
+    LIMIT ?
+  `).all(normalizedLimit);
+  const visibleRows = hydrateConversationRows(rows.filter((row) => !isPlaceholderOnlyConversation(row.id)))
+    .map((row) => ({ ...row, is_recoverable_draft: 1 }));
+
+  if (options.refreshSummaries !== false) {
+    refreshStaleSummaries(visibleRows, options.reason || 'history_open').catch((error) => {
+      console.warn('[conversation] background draft summary refresh failed', error?.message || error);
     });
   }
   return { conversations: visibleRows.map(rowToConversation) };
@@ -611,6 +740,11 @@ async function getConversation(conversationId, options = {}) {
   const db = getDb();
   const conversation = getConversationRow(conversationId);
   if (!conversation) throw new Error('会话不存在或已删除。');
+  const hydratedConversation = {
+    ...conversation,
+    is_recoverable_draft: isRecoverableDraftConversation(conversationId) ? 1 : 0,
+    can_reuse_draft_conversation: canReuseDraftConversationForCreate(conversationId) ? 1 : 0,
+  };
   const messages = db.prepare(`
     SELECT *
     FROM messages
@@ -618,7 +752,7 @@ async function getConversation(conversationId, options = {}) {
     ORDER BY datetime(created_at) ASC
   `).all(conversationId);
   return {
-    conversation: rowToConversation(conversation),
+    conversation: rowToConversation(hydratedConversation),
     messages: messages.map(rowToMessage),
   };
 }
@@ -718,13 +852,16 @@ module.exports = {
   addMessage,
   appendConversationMessage,
   bindConversationToProject,
+  canReuseDraftConversationForCreate,
   clearConversationHistory,
   deleteConversation,
   ensureConversation,
   findRunningPhaseMessage,
   findLatestConversation,
   getConversation,
+  isRecoverableDraftConversation,
   listConversations,
+  listRecoverableDraftConversations,
   listPublicConversations,
   markKnowledgeDraftConfirmed,
   markConversationSummaryDirty,

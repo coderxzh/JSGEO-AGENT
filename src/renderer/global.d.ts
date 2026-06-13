@@ -287,6 +287,8 @@ declare global {
     summary_updated_at?: string | null;
     summary_message_count?: number;
     summary_dirty?: boolean;
+    is_recoverable_draft?: boolean;
+    can_reuse_draft_conversation?: boolean;
     message_count: number;
     last_message?: string | null;
     last_message_preview?: string | null;
@@ -895,6 +897,9 @@ declare global {
       getConversations: (projectId?: string | null, limit?: number) => Promise<{
         conversations: GeoAgentConversationSummary[];
       }>;
+      getRecoverableDraftConversations?: (limit?: number) => Promise<{
+        conversations: GeoAgentConversationSummary[];
+      }>;
       getPublicConversations: (limit?: number) => Promise<{
         conversations: GeoAgentConversationSummary[];
       }>;
@@ -998,6 +1003,7 @@ declare global {
         conversation_id?: string | null;
         intent?: string;
         project_id?: string | null;
+        reuse_draft_project?: boolean;
         skill_id?: string | null;
         assets?: GeoAgentKnowledgeDraftAssetInput[];
       }) => Promise<GeoAgentKnowledgeDraft>;
@@ -1007,6 +1013,7 @@ declare global {
           conversation_id?: string | null;
           intent?: string;
           project_id?: string | null;
+          reuse_draft_project?: boolean;
           skill_id?: string | null;
           assets?: GeoAgentKnowledgeDraftAssetInput[];
         },
