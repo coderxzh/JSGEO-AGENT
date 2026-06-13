@@ -8,6 +8,7 @@ const skillService = require('./skillService.cjs');
 const { streamLLM, parseJsonContent } = require('./llmGateway.cjs');
 const { getTaskPolicy, NETWORK_MODES } = require('./modelPolicyService.cjs');
 const { fieldText } = require('./profileFieldService.cjs');
+const ruleService = require('./ruleService.cjs');
 
 const SUPPORT_PLAN = [
   { article_type: 'brand_profile', article_role: 'support', theme: '企业介绍 / 品牌形象建设' },
@@ -454,8 +455,16 @@ async function generateDraftForSlot({ projectId, platform, profile, questionSet,
     message: `正在生成：${slot.theme}`,
   });
 
+  const messages = buildArticleMessages({ profile, questions, discovery, ragChunks, slot });
+  const rulesText = ruleService.getRulesTextForStage(projectId, 4, platform);
+  if (rulesText) {
+    const userPayload = JSON.parse(messages[1].content);
+    userPayload.optimization_rules = rulesText;
+    messages[1].content = JSON.stringify(userPayload);
+  }
+
   const result = await streamLLM({
-    messages: buildArticleMessages({ profile, questions, discovery, ragChunks, slot }),
+    messages,
     temperature: 0.35,
     maxTokens: 6000,
     provider: policy.provider,
@@ -494,8 +503,16 @@ async function generateAdditionalDraftForSlot({ projectId, platform, profile, qu
     message: `正在追加生成：${slot.theme}`,
   });
 
+  const additionalMessages = buildAdditionalArticleMessages({ profile, questions, discovery, ragChunks, slot, instruction, existingDrafts });
+  const additionalRulesText = ruleService.getRulesTextForStage(projectId, 4, platform);
+  if (additionalRulesText) {
+    const additionalPayload = JSON.parse(additionalMessages[1].content);
+    additionalPayload.optimization_rules = additionalRulesText;
+    additionalMessages[1].content = JSON.stringify(additionalPayload);
+  }
+
   const result = await streamLLM({
-    messages: buildAdditionalArticleMessages({ profile, questions, discovery, ragChunks, slot, instruction, existingDrafts }),
+    messages: additionalMessages,
     temperature: 0.38,
     maxTokens: 6000,
     provider: policy.provider,
