@@ -1188,6 +1188,21 @@ function registerHandlers() {
       const result = await knowledgeService.updateKnowledgeProfile(projectId, patch);
       return { ok: true, status: 'applied', result };
     }
+    if (action.type === 'article_revision') {
+      const articleId = actionPayload.articleId || actionPayload.article_id;
+      const patch = actionPayload.patch || payload.patch || null;
+      if (!articleId) throw new Error('articleId is required.');
+      if (!patch || Object.keys(patch).length === 0) {
+        return {
+          ok: false,
+          status: 'needs_patch',
+          message: '该稿件修改提案还没有可覆盖的 patch，未修改原稿。',
+          payload,
+        };
+      }
+      const result = await articleDraftService.updateArticleDraft(articleId, patch);
+      return { ok: true, status: 'applied', result };
+    }
     return {
       ok: false,
       status: 'unsupported_action',

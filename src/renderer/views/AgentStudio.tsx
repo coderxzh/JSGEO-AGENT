@@ -145,6 +145,31 @@ type ChatSuggestion = {
   variant?: 'default' | 'secondary' | 'outline';
 };
 
+type AgentToolCall = {
+  name: string;
+  status: string;
+  title: string;
+  artifactType?: string | null;
+  artifactId?: string | null;
+};
+
+type AgentTraceSummary = {
+  runId?: string;
+  intent?: string;
+  status?: string;
+  contextSummary?: string;
+  elapsedMs?: number;
+  error?: string | null;
+  steps?: Array<{
+    type?: string;
+    toolName?: string | null;
+    status?: string;
+    title?: string;
+    artifactType?: string | null;
+    artifactId?: string | null;
+  }>;
+};
+
 /**
  * ChatMessage 类型定义
  *
@@ -183,6 +208,8 @@ type ChatMessage = {
   contextUsage?: ContextUsage;
   contextSummary?: string;
   runId?: string;
+  toolCalls?: AgentToolCall[];
+  traceSummary?: AgentTraceSummary;
   pendingAction?: {
     type: string;
     title: string;
@@ -1795,6 +1822,8 @@ export function AgentStudio() {
                 contextUsage: event.context_usage as ContextUsage | undefined,
                 contextSummary: event.context_pack_summary,
                 runId: event.run_id,
+                toolCalls: event.tool_calls as AgentToolCall[] | undefined,
+                traceSummary: event.traceSummary as AgentTraceSummary | undefined,
                 pendingAction: event.pending_action,
                 error: event.error,
                 reasoning: shouldShowReasoning ? `${hasFiles && knowledgeIntent !== 'chat' ? `已解析 ${files.length} 个附件并写入企业知识库。` : ''}${buildAssistantReasoning(event.provider, event.model, {
@@ -3029,6 +3058,148 @@ const AttachmentAwareSubmit: React.FC<{
   );
 };
 
+const AgentTraceDetails: React.FC<{
+  runId?: string;
+  traceSummary?: AgentTraceSummary;
+  toolCalls?: AgentToolCall[];
+}> = ({ runId, traceSummary, toolCalls }) => {
+  const steps = traceSummary?.steps ?? [];
+  const calls = toolCalls ?? [];
+  if (!runId && !traceSummary && calls.length === 0) return null;
+
+  return (
+    <details className="mt-4 rounded-lg border border-[#e6e0d7] bg-[#fbfaf8] px-3 py-2 text-[12px] text-[#69625a] dark:border-[#343434] dark:bg-[#202020] dark:text-[#b8b8b8]">
+      <summary className="cursor-pointer select-none font-medium text-[#4f4841] dark:text-[#e1e1e1]">
+        运行详情
+      </summary>
+      <div className="mt-2 space-y-2">
+        <div className="grid gap-1 sm:grid-cols-2">
+          {traceSummary?.intent && <div>意图：{traceSummary.intent}</div>}
+          {(runId || traceSummary?.runId) && <div>Run：{runId || traceSummary?.runId}</div>}
+          {traceSummary?.elapsedMs != null && <div>耗时：{traceSummary.elapsedMs}ms</div>}
+          {traceSummary?.status && <div>状态：{traceSummary.status}</div>}
+        </div>
+        {traceSummary?.contextSummary && (
+          <div className="rounded-md bg-white/70 px-2 py-1.5 dark:bg-white/5">
+            上下文：{traceSummary.contextSummary}
+          </div>
+        )}
+        {calls.length > 0 && (
+          <div className="space-y-1">
+            <div className="font-medium text-[#4f4841] dark:text-[#e1e1e1]">工具调用</div>
+            {calls.map((call, index) => (
+              <div className="flex items-center justify-between gap-3 rounded-md bg-white/70 px-2 py-1 dark:bg-white/5" key={`${call.name}-${index}`}>
+                <span>{call.title || call.name}</span>
+                <span className="shrink-0 text-[#81796f] dark:text-[#969696]">{call.status}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {steps.length > 0 && (
+          <div className="space-y-1">
+            <div className="font-medium text-[#4f4841] dark:text-[#e1e1e1]">步骤</div>
+            {steps.map((step, index) => (
+              <div className="rounded-md bg-white/70 px-2 py-1 dark:bg-white/5" key={`${step.title || step.toolName || step.type}-${index}`}>
+                <div className="flex items-center justify-between gap-3">
+                  <span>{step.title || step.toolName || step.type}</span>
+                  <span className="shrink-0 text-[#81796f] dark:text-[#969696]">{step.status}</span>
+                </div>
+                {(step.artifactType || step.artifactId) && (
+                  <div className="mt-0.5 truncate text-[#81796f] dark:text-[#969696]">
+                    资产：{step.artifactType || 'artifact'} {step.artifactId || ''}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+        {traceSummary?.error && <div className="text-red-600 dark:text-red-300">错误：{traceSummary.error}</div>}
+      </div>
+    </details>
+  );
+};
+
+const PendingActionCard: React.FC<{
+  action: NonNullable<ChatMessage['pendingAction']>;
+}> = ({ action }) => {
+  const [status, setStatus] = useState<'idle' | 'approving' | 'rejecting' | 'approved' | 'rejected' | 'error'>('idle');
+  const [message, setMessage] = useState('');
+  const changes = Array.isArray(action.payload?.changes)
+    ? action.payload.changes as Array<{ label?: string; field?: string; oldValue?: string; newValue?: string; source?: string }>
+    : [];
+
+  const approve = async () => {
+    if (!window.geoAgent?.approveAgentAction) return;
+    setStatus('approving');
+    try {
+      const result = await window.geoAgent.approveAgentAction(action);
+      setMessage(String(result?.message || (result?.ok === false ? '确认未生效' : '已确认')));
+      setStatus(result?.ok === false ? 'error' : 'approved');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+      setStatus('error');
+    }
+  };
+
+  const reject = async () => {
+    if (!window.geoAgent?.rejectAgentAction) return;
+    setStatus('rejecting');
+    try {
+      const result = await window.geoAgent.rejectAgentAction(action);
+      setMessage(String(result?.message || '已取消'));
+      setStatus('rejected');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+      setStatus('error');
+    }
+  };
+
+  const isBusy = status === 'approving' || status === 'rejecting';
+  const canAct = status === 'idle' || status === 'error';
+
+  return (
+    <Confirmation
+      approval={{ id: `${action.type}:${action.title}` }}
+      className="mt-4 border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100"
+      state={status === 'approved' || status === 'rejected' ? 'output-available' : 'approval-requested'}
+    >
+      <ConfirmationTitle className="font-semibold">{action.title}</ConfirmationTitle>
+      <ConfirmationRequest>
+        {action.summary && (
+          <div className="text-[13px] leading-relaxed text-amber-900/90 dark:text-amber-100/80">{action.summary}</div>
+        )}
+        {changes.length > 0 && (
+          <div className="mt-3 overflow-hidden rounded-md border border-amber-200 bg-white/75 text-[12px] dark:border-amber-900/50 dark:bg-black/10">
+            {changes.map((change, index) => (
+              <div className="grid gap-1 border-b border-amber-100 px-3 py-2 last:border-b-0 dark:border-amber-900/40" key={`${change.field || change.label}-${index}`}>
+                <div className="font-medium">{change.label || change.field || '变更项'}</div>
+                {change.oldValue && <div className="text-amber-800/80 dark:text-amber-100/70">原值：{change.oldValue}</div>}
+                {change.newValue && <div>新值：{change.newValue}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+        <ConfirmationActions className="mt-3">
+          <ConfirmationAction disabled={isBusy || !canAct} onClick={reject} variant="outline">
+            {status === 'rejecting' ? '取消中' : '取消'}
+          </ConfirmationAction>
+          <ConfirmationAction disabled={isBusy || !canAct} onClick={approve}>
+            {status === 'approving' ? '确认中' : '确认应用'}
+          </ConfirmationAction>
+        </ConfirmationActions>
+      </ConfirmationRequest>
+      {message && (
+        <div className={cn(
+          'text-[13px]',
+          status === 'error' ? 'text-red-700 dark:text-red-300' : 'text-amber-900 dark:text-amber-100',
+        )}>
+          {message}
+        </div>
+      )}
+    </Confirmation>
+  );
+};
+
 const ChatBubble: React.FC<{
   message: ChatMessage;
   setInputValue: (value: string) => void;
@@ -3215,13 +3386,13 @@ const ChatBubble: React.FC<{
           <MessageResponse className="max-w-none">{message.content}</MessageResponse>
         )}
         {message.pendingAction && (
-          <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] leading-relaxed text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
-            <div className="font-semibold">{message.pendingAction.title}</div>
-            {message.pendingAction.summary && (
-              <div className="mt-1 text-amber-800/90 dark:text-amber-100/80">{message.pendingAction.summary}</div>
-            )}
-          </div>
+          <PendingActionCard action={message.pendingAction} />
         )}
+        <AgentTraceDetails
+          runId={message.runId}
+          toolCalls={message.toolCalls}
+          traceSummary={message.traceSummary}
+        />
         {message.status === 'streaming' && (
           message.content || message.phaseTwoExecution || message.sourceDiscoveryExecution || message.articleDraftExecution
             ? <StreamingTailIndicator label={message.reasoning ?? '正在等待模型继续输出'} />

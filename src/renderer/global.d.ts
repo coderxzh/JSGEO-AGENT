@@ -670,6 +670,16 @@ declare global {
           reasoning_delta?: string;
           run_id?: string;
           context_pack_summary?: string;
+          tool_calls?: Array<{ name: string; status: string; title: string; artifactType?: string | null; artifactId?: string | null }>;
+          traceSummary?: {
+            runId?: string;
+            intent?: string;
+            status?: string;
+            contextSummary?: string;
+            elapsedMs?: number;
+            error?: string | null;
+            steps?: Array<{ type?: string; toolName?: string | null; status?: string; title?: string; artifactType?: string | null; artifactId?: string | null }>;
+          };
           context_usage?: {
             usedTokens: number;
             maxTokens: number;
@@ -711,6 +721,16 @@ declare global {
         reasoning_content?: string | null;
         run_id?: string;
         context_pack_summary?: string;
+        tool_calls?: Array<{ name: string; status: string; title: string; artifactType?: string | null; artifactId?: string | null }>;
+        traceSummary?: {
+          runId?: string;
+          intent?: string;
+          status?: string;
+          contextSummary?: string;
+          elapsedMs?: number;
+          error?: string | null;
+          steps?: Array<{ type?: string; toolName?: string | null; status?: string; title?: string; artifactType?: string | null; artifactId?: string | null }>;
+        };
         context_usage?: {
           usedTokens: number;
           maxTokens: number;
@@ -755,6 +775,16 @@ declare global {
           reasoning_content?: string | null;
           run_id?: string;
           context_pack_summary?: string;
+          tool_calls?: Array<{ name: string; status: string; title: string; artifactType?: string | null; artifactId?: string | null }>;
+          traceSummary?: {
+            runId?: string;
+            intent?: string;
+            status?: string;
+            contextSummary?: string;
+            elapsedMs?: number;
+            error?: string | null;
+            steps?: Array<{ type?: string; toolName?: string | null; status?: string; title?: string; artifactType?: string | null; artifactId?: string | null }>;
+          };
           context_usage?: {
             usedTokens: number;
             maxTokens: number;
