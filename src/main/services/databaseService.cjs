@@ -684,6 +684,15 @@ function migrateSchema(database) {
     CREATE INDEX IF NOT EXISTS idx_agent_steps_run_index
       ON agent_steps(run_id, step_index);
   `);
+
+  // 自动学习调度器状态表
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS scheduler_state (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
 }
 
 module.exports = {
