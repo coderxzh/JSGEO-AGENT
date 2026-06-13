@@ -604,6 +604,19 @@ declare global {
     created_at: string;
   };
 
+  interface GeoAgentAutoLearningStatus {
+    isRunning: boolean;
+    lastRunAt: string | null;
+    nextRunAt: string;
+    intervalMs: number;
+  }
+
+  interface GeoAgentAutoLearningCycleResult {
+    projectsChecked: number;
+    visibilityDetected: number;
+    rulesGenerated: number;
+  }
+
   interface Window {
     geoAgent?: {
       // 窗口控制
@@ -1234,6 +1247,13 @@ declare global {
       reindexKnowledge: (projectId: string) => Promise<GeoAgentKnowledgeIndexStatus>;
       getKnowledgeIndexStatus: (projectId?: string | null) => Promise<GeoAgentKnowledgeIndexStatus>;
       getSkills: () => Promise<{ skills: GeoAgentSkill[] }>;
+      // 自动学习调度
+      getAutoLearningStatus: () => Promise<GeoAgentAutoLearningStatus>;
+      triggerAutoLearningNow: () => Promise<{
+        requestId: string;
+        channel: string;
+      }>;
+      setAutoLearningInterval: (intervalMs: number) => Promise<boolean>;
     };
   }
 }
