@@ -27,6 +27,7 @@ const contextWindowService = require('./services/contextWindowService.cjs');
 const agentRuntimeService = require('./services/agentRuntimeService.cjs');
 const ruleService = require('./services/ruleService.cjs');
 const attachmentService = require('./services/attachmentService.cjs');
+const webBuilderService = require('./services/webBuilderService.cjs');
 
 const rootDir = path.resolve(__dirname, '..', '..');
 const isDev = !app.isPackaged;
@@ -2139,6 +2140,52 @@ function registerHandlers() {
   ipcMain.handle('geo-agent:set-auto-learning-interval', async (_event, payload) => {
     const { intervalMs } = payload || {};
     return autoLearningScheduler.setIntervalMs(intervalMs);
+  });
+
+  // --- Web Builder: AI 网页生成与托管 ---
+  ipcMain.handle('geo-agent:list-websites', async (_event, projectId) =>
+    webBuilderService.listWebsites(projectId));
+
+  ipcMain.handle('geo-agent:get-website', async (_event, websiteId) =>
+    webBuilderService.getWebsite(websiteId));
+
+  ipcMain.handle('geo-agent:get-website-pages', async (_event, websiteId) =>
+    webBuilderService.getWebsitePages(websiteId));
+
+  ipcMain.handle('geo-agent:get-website-page', async (_event, pageId) =>
+    webBuilderService.getWebsitePage(pageId));
+
+  ipcMain.handle('geo-agent:get-website-preview-html', async (_event, { websiteId, pageSlug }) =>
+    webBuilderService.getWebsitePreviewHtml(websiteId, pageSlug));
+
+  ipcMain.handle('geo-agent:get-website-preview-base-url', async (_event, websiteId) =>
+    webBuilderService.getWebsitePreviewBaseUrl(websiteId));
+
+  ipcMain.handle('geo-agent:delete-website', async (_event, websiteId) =>
+    webBuilderService.deleteWebsite(websiteId));
+
+  ipcMain.handle('geo-agent:export-website', async (_event, websiteId) =>
+    webBuilderService.exportWebsiteZip(websiteId));
+
+  ipcMain.handle('geo-agent:generate-website-stream', async (event, request = {}) => {
+    const requestId = request.requestId;
+    const payload = request.payload || {};
+    const channel = `geo-agent:generate-website-stream:${requestId}`;
+    const { projectId, ...options } = payload;
+
+    console.log('[WebBuilder] generate-website-stream called', { requestId, projectId, options });
+
+    try {
+      await webBuilderService.generateWebsite(projectId, options, (streamEvent) => {
+        event.sender.send(channel, streamEvent);
+      });
+      // 只有成功时才发 done；generateWebsite 内部已发 done，这里不再重复
+    } catch (err) {
+      console.error('[WebBuilder] generate error:', err);
+      event.sender.send(channel, { type: 'error', error: err.message || String(err) });
+      // 不发 done，让 invokeStream 保持 reject 状态
+    }
+    return { type: 'done' };
   });
 }
 

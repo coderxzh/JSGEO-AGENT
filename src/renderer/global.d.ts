@@ -1281,6 +1281,77 @@ declare global {
       setAutoLearningInterval: (intervalMs: number) => Promise<boolean>;
       getRulesForStage: (projectId: string, stage: number, platform: string) => Promise<GeoAgentRule[]>;
       getGlobalRules: (platform: string) => Promise<GeoAgentRule[]>;
+      // Web Builder: AI 网页生成与托管
+      listWebsites: (projectId: string) => Promise<GeoAgentWebsite[]>;
+      getWebsite: (websiteId: string) => Promise<GeoAgentWebsite | null>;
+      getWebsitePages: (websiteId: string) => Promise<GeoAgentWebsitePage[]>;
+      getWebsitePage: (pageId: string) => Promise<GeoAgentWebsitePage | null>;
+      getWebsitePreviewHtml: (websiteId: string, pageSlug: string) => Promise<string | null>;
+      getWebsitePreviewBaseUrl: (websiteId: string) => Promise<string | null>;
+      deleteWebsite: (websiteId: string) => Promise<{ success: boolean }>;
+      exportWebsite: (websiteId: string) => Promise<{ success: boolean; path?: string; canceled?: boolean }>;
+      generateWebsiteStream: (
+        projectId: string,
+        options?: {
+          site_name?: string;
+          requirements?: string;
+          brand_color?: string;
+        },
+        onEvent?: (event: { type: string; [key: string]: unknown }) => void
+      ) => Promise<GeoAgentWebsite>;
     };
   }
+}
+
+// Web Builder 类型（declare global 内）
+declare global {
+  type GeoAgentWebsite = {
+    id: string;
+    project_id: string;
+    name: string;
+    slug: string;
+    status: 'generating' | 'ready' | 'failed';
+    site_plan: {
+      site_name: string;
+      tagline?: string;
+      pages: Array<{
+        id: string;
+        slug: string;
+        title: string;
+        meta_description?: string;
+        h1: string;
+        purpose?: string;
+      }>;
+      navigation: Array<{ label: string; slug: string; is_primary: boolean }>;
+      style_tokens?: {
+        primary_color: string;
+        font_family: string;
+        border_radius: string;
+      };
+      seo_defaults?: {
+        language: string;
+        locale: string;
+        site_type: string;
+      };
+    } | null;
+    brand_config: Record<string, unknown> | null;
+    storage_dir?: string | null;
+    error_message?: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+
+  type GeoAgentWebsitePage = {
+    id: string;
+    website_id: string;
+    page_slug: string;
+    title: string;
+    meta_description?: string | null;
+    html_content?: string | null;
+    page_order: number;
+    status: 'pending' | 'generating' | 'ready' | 'failed';
+    error_message?: string | null;
+    created_at: string;
+    updated_at: string;
+  };
 }

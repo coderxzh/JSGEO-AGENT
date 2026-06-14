@@ -203,4 +203,15 @@ contextBridge.exposeInMainWorld('geoAgent', {
   getSkills: () => ipcRenderer.invoke('geo-agent:get-skills'),
   getRulesForStage: (projectId, stage, platform) => ipcRenderer.invoke('geo-agent:get-rules-for-stage', projectId, stage, platform),
   getGlobalRules: (platform) => ipcRenderer.invoke('geo-agent:get-global-rules', platform),
+
+  // Web Builder: AI 网页生成与托管
+  listWebsites: (projectId) => ipcRenderer.invoke('geo-agent:list-websites', projectId),
+  getWebsite: (websiteId) => ipcRenderer.invoke('geo-agent:get-website', websiteId),
+  getWebsitePages: (websiteId) => ipcRenderer.invoke('geo-agent:get-website-pages', websiteId),
+  getWebsitePage: (pageId) => ipcRenderer.invoke('geo-agent:get-website-page', pageId),
+  getWebsitePreviewHtml: (websiteId, pageSlug) => ipcRenderer.invoke('geo-agent:get-website-preview-html', { websiteId, pageSlug }),
+  getWebsitePreviewBaseUrl: (websiteId) => ipcRenderer.invoke('geo-agent:get-website-preview-base-url', websiteId),
+  deleteWebsite: (websiteId) => ipcRenderer.invoke('geo-agent:delete-website', websiteId),
+  exportWebsite: (websiteId) => ipcRenderer.invoke('geo-agent:export-website', websiteId),
+  generateWebsiteStream: (projectId, options, onEvent) => invokeStream('geo-agent:generate-website-stream', { projectId, ...options }, onEvent),
 });

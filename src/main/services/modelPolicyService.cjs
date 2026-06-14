@@ -158,6 +158,18 @@ function getTaskPolicy(taskType, context = {}) {
     };
   }
 
+  if (task === 'website_generation') {
+    return {
+      task_type: task,
+      provider: process.env.GEO_WEB_BUILDER_PROVIDER || 'ark',
+      model: arkModel(process.env.GEO_WEB_BUILDER_MODEL, process.env.GEO_GENERATION_MODEL, process.env.DOUBAO_MODEL, process.env.ARK_MODEL),
+      api_family: API_FAMILIES.CHAT_COMPLETIONS,
+      network_mode: NETWORK_MODES.NONE,
+      deep_thinking: false,
+      stream: true,
+    };
+  }
+
   return {
     task_type: 'rag_chat',
     provider: process.env.GEO_GENERATION_PROVIDER || 'ark',

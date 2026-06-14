@@ -731,6 +731,43 @@ function migrateSchema(database) {
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  // AI 网页生成：网站与页面表
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS websites (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'generating',
+      site_plan_json TEXT,
+      brand_config_json TEXT,
+      storage_dir TEXT,
+      error_message TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_websites_project
+      ON websites(project_id, created_at);
+
+    CREATE TABLE IF NOT EXISTS website_pages (
+      id TEXT PRIMARY KEY,
+      website_id TEXT NOT NULL REFERENCES websites(id) ON DELETE CASCADE,
+      page_slug TEXT NOT NULL,
+      title TEXT NOT NULL,
+      meta_description TEXT,
+      html_content TEXT,
+      page_order INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'pending',
+      error_message TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_website_pages_website
+      ON website_pages(website_id, page_order);
+  `);
 }
 
 module.exports = {
