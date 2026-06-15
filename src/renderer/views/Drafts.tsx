@@ -75,6 +75,7 @@ function statusLabel(status: string) {
 export function Drafts() {
   const { currentEnterprise, currentEnterpriseId, hasEnterprises, isLoadingEnterprises } = useEnterprise();
   const [drafts, setDrafts] = useState<GeoAgentGeoArticleDraft[]>([]);
+  const [allDrafts, setAllDrafts] = useState<GeoAgentGeoArticleDraft[]>([]);
   const [summary, setSummary] = useState<GeoAgentArticleDraftListResponse['summary'] | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
@@ -85,7 +86,7 @@ export function Drafts() {
   const [selectedDraftIntent, setSelectedDraftIntent] = useState<'edit' | 'ai'>('edit');
   const [resourceDraft, setResourceDraft] = useState<GeoAgentGeoArticleDraft | null>(null);
   const [isSyncingOrders, setIsSyncingOrders] = useState(false);
-  const [isAutoPublishing, setIsAutoPublishing] = useState(false);
+  const [autoPublishingRole, setAutoPublishingRole] = useState<'support' | 'ranking' | null>(null);
   const [autoPublishResult, setAutoPublishResult] = useState<{
     total: number;
     submitted?: number;
@@ -106,17 +107,22 @@ export function Drafts() {
   const loadDrafts = useCallback(async () => {
     if (!currentEnterpriseId || !window.geoAgent?.listArticleDrafts) {
       setDrafts([]);
+      setAllDrafts([]);
       setSummary(null);
       return;
     }
     setIsLoading(true);
     setError(null);
     try {
-      const response = await window.geoAgent.listArticleDrafts(currentEnterpriseId, {
-        status: statusFilter === 'all' ? undefined : statusFilter,
-        article_role: roleFilter === 'all' ? undefined : roleFilter,
-      });
+      const [response, allResponse] = await Promise.all([
+        window.geoAgent.listArticleDrafts(currentEnterpriseId, {
+          status: statusFilter === 'all' ? undefined : statusFilter,
+          article_role: roleFilter === 'all' ? undefined : roleFilter,
+        }),
+        window.geoAgent.listArticleDrafts(currentEnterpriseId, {}),
+      ]);
       setDrafts(response.drafts ?? []);
+      setAllDrafts(allResponse.drafts ?? []);
       setSummary(response.summary ?? null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : String(loadError));
@@ -138,7 +144,19 @@ export function Drafts() {
     return () => window.removeEventListener('geo-agent-geo-project-changed', handleDraftsChanged);
   }, [loadDrafts]);
 
-  const rankingReady = useMemo(() => canPublishRanking(drafts), [drafts]);
+  // 监听视图切换事件，当跳转到稿件管理页时强制刷新
+  useEffect(() => {
+    const handleOpenView = (event: Event) => {
+      const view = (event as CustomEvent<{ view?: string }>).detail?.view;
+      if (view === 'drafts') {
+        loadDrafts();
+      }
+    };
+    window.addEventListener('geo-agent-open-view', handleOpenView);
+    return () => window.removeEventListener('geo-agent-open-view', handleOpenView);
+  }, [loadDrafts]);
+
+  const rankingReady = useMemo(() => canPublishRanking(allDrafts), [allDrafts]);
   const markReviewed = async (draft: GeoAgentGeoArticleDraft) => {
     if (!window.geoAgent?.markArticleReviewed) return;
     setError(null);
@@ -289,6 +307,10 @@ export function Drafts() {
   }, [drafts]);
 
   const publishableDraftCount = useMemo(() => getPublishableDraftCount('support'), [getPublishableDraftCount]);
+  const publishableRankingCount = useMemo(() => getPublishableDraftCount('ranking'), [getPublishableDraftCount]);
+
+  // 自动发稿按钮只在"全部"、"草稿"、"已校对"状态下显示
+  const canShowAutoPublishButtons = ['all', 'draft', 'reviewed'].includes(statusFilter);
 
   const handleAutoPublish = async (role: 'support' | 'ranking') => {
     if (!currentEnterpriseId || !window.geoAgent?.autoPublishArticles) return;
@@ -307,7 +329,7 @@ export function Drafts() {
     });
     if (!confirmed) return;
 
-    setIsAutoPublishing(true);
+    setAutoPublishingRole(role);
     setAutoPublishResult(null);
     setError(null);
     try {
@@ -330,7 +352,7 @@ export function Drafts() {
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : String(actionError));
     } finally {
-      setIsAutoPublishing(false);
+      setAutoPublishingRole(null);
     }
   };
 
@@ -388,19 +410,38 @@ export function Drafts() {
             <RefreshCw className={cn('size-3.5', isSyncingOrders && 'animate-spin')} />
             同步订单状态
           </button>
-          <button
-            className="inline-flex items-center gap-2 rounded-md border border-primary/20 bg-primary px-3 py-2 text-[11px] font-bold text-on-primary transition-all duration-200 hover:bg-primary/90 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={isAutoPublishing || publishableDraftCount === 0}
-            onClick={() => handleAutoPublish('support')}
-            type="button"
-          >
-            {isAutoPublishing ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Zap className="size-3.5" />
-            )}
-            {isAutoPublishing ? '自动发稿中...' : '一键自动发稿'}
-          </button>
+          {canShowAutoPublishButtons && (
+            <>
+              <button
+                className="inline-flex items-center gap-2 rounded-md border border-primary/20 bg-primary px-3 py-2 text-[11px] font-bold text-on-primary transition-all duration-200 hover:bg-primary/90 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={autoPublishingRole !== null || publishableDraftCount === 0}
+                onClick={() => handleAutoPublish('support')}
+                type="button"
+              >
+                {autoPublishingRole === 'support' ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Zap className="size-3.5" />
+                )}
+                {autoPublishingRole === 'support' ? '自动发稿中...' : '自动发支撑稿'}
+              </button>
+              {rankingReady && (
+                <button
+                  className="inline-flex items-center gap-2 rounded-md border border-primary/20 bg-primary px-3 py-2 text-[11px] font-bold text-on-primary transition-all duration-200 hover:bg-primary/90 hover:shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={autoPublishingRole !== null || publishableRankingCount === 0}
+                  onClick={() => handleAutoPublish('ranking')}
+                  type="button"
+                >
+                  {autoPublishingRole === 'ranking' ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <Trophy className="size-3.5" />
+                  )}
+                  {autoPublishingRole === 'ranking' ? '自动发稿中...' : `自动发排行榜${publishableRankingCount > 0 ? ` (${publishableRankingCount})` : ''}`}
+                </button>
+              )}
+            </>
+          )}
           <Filter className="size-4 text-on-surface-variant" />
           <Segmented
             value={roleFilter}

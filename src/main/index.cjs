@@ -579,6 +579,15 @@ function registerHandlers() {
   ipcMain.handle('geo-agent:get-project', async (_event, projectId) => projectService.getProject(projectId));
   ipcMain.handle('geo-agent:delete-project', async (_event, projectId) => projectService.deleteProject(projectId));
 
+  // 项目管理：企业优化阶段进度聚合
+  ipcMain.handle('geo-agent:get-project-summaries', async () => ({
+    projects: projectService.listProjectsWithStageProgress(),
+  }));
+  ipcMain.handle('geo-agent:get-project-summary', async (_event, projectId) =>
+    projectService.getProjectSummary(projectId));
+  ipcMain.handle('geo-agent:set-reflection-enabled', async (_event, projectId, enabled) =>
+    projectService.setReflectionEnabled(projectId, enabled));
+
   ipcMain.handle('geo-agent:get-knowledge-profiles', async () => ({
     profiles: projectService.listKnowledgeProfiles(),
   }));

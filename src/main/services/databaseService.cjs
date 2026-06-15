@@ -768,6 +768,13 @@ function migrateSchema(database) {
     CREATE INDEX IF NOT EXISTS idx_website_pages_website
       ON website_pages(website_id, page_order);
   `);
+
+  // 项目管理：为 projects 表新增 reflection_enabled 字段
+  const projColumns = database.prepare('PRAGMA table_info(projects)').all();
+  const projExisting = new Set(projColumns.map((c) => c.name));
+  if (!projExisting.has('reflection_enabled')) {
+    database.exec("ALTER TABLE projects ADD COLUMN reflection_enabled INTEGER NOT NULL DEFAULT 1");
+  }
 }
 
 module.exports = {

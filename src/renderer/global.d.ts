@@ -596,6 +596,43 @@ declare global {
 	    artifacts: Record<string, unknown>;
 	  };
 
+	  type GeoAgentProjectStageStatus = {
+	    stage: number;
+	    key: string;
+	    label: string;
+	    status: 'not_started' | 'ready' | 'pending' | 'in_progress' | 'completed' | 'user_deferred' | 'failed' | string;
+	    artifact_id?: string | null;
+	    total?: number;
+	    published?: number;
+	    pending_rules?: number;
+	  };
+
+	  type GeoAgentProjectPlatformStages = {
+	    stage_2: GeoAgentProjectStageStatus;
+	    stage_3: GeoAgentProjectStageStatus;
+	    stage_4: GeoAgentProjectStageStatus;
+	    stage_5: GeoAgentProjectStageStatus;
+	    stage_6: GeoAgentProjectStageStatus;
+	    stage_7: GeoAgentProjectStageStatus;
+	  };
+
+	  type GeoAgentProjectSummaryWithProgress = {
+	    id: string;
+	    name: string;
+	    description?: string | null;
+	    company_name: string;
+	    industry_category?: string | null;
+	    reflection_enabled: boolean;
+	    stage_1: GeoAgentProjectStageStatus;
+	    platforms: {
+	      doubao: GeoAgentProjectPlatformStages;
+	      deepseek: GeoAgentProjectPlatformStages;
+	    };
+	    overall_progress: number;
+	    created_at: string;
+	    updated_at: string;
+	  };
+
 	  type GeoAgentPlatformWorkflowState = {
 	    platform: 'doubao' | 'deepseek' | string;
 	    label: string;
@@ -848,6 +885,9 @@ declare global {
       createProject: (payload: GeoAgentCreateProjectPayload) => Promise<{ project: GeoAgentProjectSummary }>;
       getProject: (projectId: string) => Promise<{ project: GeoAgentProjectSummary }>;
       deleteProject: (projectId: string) => Promise<{ ok: boolean }>;
+      getProjectSummaries: () => Promise<{ projects: GeoAgentProjectSummaryWithProgress[] }>;
+      getProjectSummary: (projectId: string) => Promise<{ project: GeoAgentProjectSummaryWithProgress }>;
+      setReflectionEnabled: (projectId: string, enabled: boolean) => Promise<{ ok: boolean; project_id: string; reflection_enabled: boolean }>;
       ensureGeoProject: (projectId: string) => Promise<GeoAgentGeoProject>;
       getGeoProjects: (projectId?: string | null) => Promise<{ projects: GeoAgentGeoProject[] }>;
       getGeoProject: (geoProjectId: string) => Promise<GeoAgentGeoProject>;

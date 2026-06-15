@@ -92,6 +92,18 @@ function getTaskPolicy(taskType, context = {}) {
   }
 
   if (task === 'publish_channel_recommendation') {
+    const platform = String(context.platform || '').toLowerCase();
+    if (platform === 'deepseek') {
+      return {
+        task_type: task,
+        provider: 'deepseek',
+        model: arkModel(process.env.GEO_PUBLISH_RECOMMENDATION_MODEL, process.env.DEEPSEEK_MODEL),
+        api_family: API_FAMILIES.CHAT_COMPLETIONS,
+        network_mode: NETWORK_MODES.NONE,
+        deep_thinking: false,
+        stream: false,
+      };
+    }
     return {
       task_type: task,
       provider: process.env.GEO_PUBLISH_RECOMMENDATION_PROVIDER || process.env.GEO_GENERATION_PROVIDER || 'ark',

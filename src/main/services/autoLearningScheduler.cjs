@@ -75,6 +75,13 @@ async function runCycle() {
 
     for (const project of projects) {
       try {
+        // 项目管理：检查该企业是否开启了反思优化
+        const projectRow = databaseRef.prepare('SELECT reflection_enabled FROM projects WHERE id = ?').get(project.id);
+        if (projectRow && projectRow.reflection_enabled === 0) {
+          console.log(`[AutoLearningScheduler] 项目 ${project.id} 已关闭反思优化，跳过。`);
+          continue;
+        }
+
         projectsChecked++;
         const projectId = project.id;
 

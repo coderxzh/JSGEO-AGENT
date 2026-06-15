@@ -1,7 +1,6 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 import {
-  ArrowUp,
   Brain,
   Check,
   ChevronDown,
@@ -16,7 +15,9 @@ import {
   Mic,
   Plus,
   Search,
+  Send,
   Sparkles,
+  Square,
   Target,
   X,
 } from 'lucide-react';
@@ -299,13 +300,17 @@ async function typeMessageText(
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
   id: string,
   text: string,
-  field: 'content' | 'reasoningContent' = 'content'
+  field: 'content' | 'reasoningContent' = 'content',
+  shouldContinue?: () => boolean
 ) {
   if (!text) {
     return;
   }
 
   for (let index = 0; index < text.length; index += TYPEWRITER_CHUNK_SIZE) {
+    if (shouldContinue && !shouldContinue()) {
+      return;
+    }
     const chunk = text.slice(index, index + TYPEWRITER_CHUNK_SIZE);
     setMessages((current) => appendMessageText(current, id, chunk, field));
     await wait(TYPEWRITER_DELAY);
@@ -1085,6 +1090,8 @@ export function AgentStudio() {
   const phaseTwoPromptInFlightRef = useRef<Set<string>>(new Set());
   const stageInFlightRef = useRef<Set<string>>(new Set());
   const typewriterQueuesRef = useRef<Record<string, Promise<void>>>({});
+  const stopRequestedRef = useRef(false);
+  const currentAssistantIdRef = useRef<string | null>(null);
   const skipNextConversationAutoRestoreRef = useRef(false);
   const prevEnterpriseIdRef = useRef<string | null | undefined>(undefined);
   const pendingKnowledgeIngestRef = useRef<{
@@ -1341,6 +1348,17 @@ export function AgentStudio() {
     };
   }, []);
 
+  const stopCurrentStream = useCallback(() => {
+    stopRequestedRef.current = true;
+    const assistantId = currentAssistantIdRef.current;
+    if (assistantId) {
+      typewriterQueuesRef.current[assistantId] = Promise.resolve();
+      setMessages((current) => updateMessage(current, assistantId, { status: 'complete' }));
+    }
+    setIsSending(false);
+    currentAssistantIdRef.current = null;
+  }, []);
+
   const sendMessage = async (
     text?: string,
     files: PromptAttachment[] = [],
@@ -1452,6 +1470,8 @@ export function AgentStudio() {
     setInputValue('');
     setSelectedSkill(null);
     setIsSending(true);
+    stopRequestedRef.current = false;
+    currentAssistantIdRef.current = assistantId;
     if (shouldStartSeparateKnowledgeConversation) {
       openConversationRequestRef.current += 1;
       visibleConversationIdRef.current = null;
@@ -1513,8 +1533,12 @@ export function AgentStudio() {
         let draft: GeoAgentKnowledgeDraft;
         let draftFinalEvent: Awaited<ReturnType<NonNullable<Window['geoAgent']>['createKnowledgeDraftStream']>> | null = null;
         if (window.geoAgent.createKnowledgeDraftStream) {
-          const enqueueKnowledgeTask = (task: () => Promise<void> | void) => enqueueTypewriterTask(typewriterQueuesRef, assistantId, task);
+          const enqueueKnowledgeTask = (task: () => Promise<void> | void) => enqueueTypewriterTask(typewriterQueuesRef, assistantId, () => {
+            if (stopRequestedRef.current) return;
+            return task();
+          });
           const finalEvent = await window.geoAgent.createKnowledgeDraftStream(draftPayload, (event) => {
+            if (stopRequestedRef.current) return;
             if (event.type === 'meta' && event.conversation_id) {
               visibleConversationIdRef.current = event.conversation_id;
               setConversationId(event.conversation_id);
@@ -1564,7 +1588,7 @@ export function AgentStudio() {
               });
             }
             if (event.type === 'reasoning_delta' && event.text) {
-              enqueueKnowledgeTask(() => typeMessageText(setMessages, assistantId, event.text ?? '', 'reasoningContent'));
+              enqueueKnowledgeTask(() => typeMessageText(setMessages, assistantId, event.text ?? '', 'reasoningContent', () => !stopRequestedRef.current));
             }
             if (event.type === 'draft_section' && event.section) {
               enqueueKnowledgeTask(async () => {
@@ -1624,6 +1648,10 @@ export function AgentStudio() {
             throw new Error(finalEvent.error || 'Knowledge draft creation failed.');
           }
           await typewriterQueuesRef.current[assistantId]?.catch(() => undefined);
+          if (stopRequestedRef.current) {
+            setIsSending(false);
+            return;
+          }
           draftFinalEvent = finalEvent;
           draft = finalEvent.draft;
           if (finalEvent.conversation_id) {
@@ -1774,6 +1802,7 @@ export function AgentStudio() {
           conversationId,
           chatOptions,
           (event) => {
+            if (stopRequestedRef.current) return;
             if (event.type === 'meta' && event.conversation_id) {
               setConversationId(event.conversation_id);
               localStorage.setItem(conversationStorageKey(activeProjectId, event.conversation_id), event.conversation_id);
@@ -1874,6 +1903,10 @@ export function AgentStudio() {
             }
           }
         );
+        if (stopRequestedRef.current) {
+          setIsSending(false);
+          return;
+        }
         if (finalEvent.context_usage) {
           setLatestContextUsage(finalEvent.context_usage as ContextUsage);
         }
@@ -1885,6 +1918,10 @@ export function AgentStudio() {
         window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: finalEvent.conversation_id } }));
       } else {
         const response = await window.geoAgent.sendChat(messageToSend, conversationId, chatOptions);
+        if (stopRequestedRef.current) {
+          setIsSending(false);
+          return;
+        }
         setConversationId(response.conversation_id);
         localStorage.setItem(conversationStorageKey(activeProjectId, response.conversation_id), response.conversation_id);
         const finalReasoning = shouldShowReasoning ? `${knowledgeIntent !== 'chat' && (hasFiles || hasReferencedAttachments) ? `已解析 ${hasFiles ? files.length : referencedAttachmentIds.length} 个附件并写入企业知识库。` : ''}${buildAssistantReasoning(response.provider, response.model, {
@@ -1907,9 +1944,9 @@ export function AgentStudio() {
           status: 'streaming',
         }));
         if (shouldShowReasoning && response.reasoning_content) {
-          await typeMessageText(setMessages, assistantId, response.reasoning_content, 'reasoningContent');
+          await typeMessageText(setMessages, assistantId, response.reasoning_content, 'reasoningContent', () => !stopRequestedRef.current);
         }
-        await typeMessageText(setMessages, assistantId, response.content);
+        await typeMessageText(setMessages, assistantId, response.content, 'content', () => !stopRequestedRef.current);
 
         // 生成建议
         const suggestions = generateSuggestions({
@@ -1930,12 +1967,16 @@ export function AgentStudio() {
         window.dispatchEvent(new CustomEvent('geo-agent-conversation-changed', { detail: { id: response.conversation_id } }));
       }
     } catch (error) {
+      if (stopRequestedRef.current) {
+        setIsSending(false);
+        return;
+      }
       const errorMessage = normalizeChatError(error);
       setMessages((current) => updateMessage(current, assistantId, {
         content: '',
         status: 'streaming',
       }));
-      await typeMessageText(setMessages, assistantId, errorMessage);
+      await typeMessageText(setMessages, assistantId, errorMessage, 'content', () => !stopRequestedRef.current);
       setMessages((current) => updateMessage(current, assistantId, {
         status: 'error',
       }));
@@ -2970,6 +3011,7 @@ export function AgentStudio() {
                 inputValue={inputValue}
                 isSending={isSending}
                 selectedSkill={selectedSkill}
+                onStop={stopCurrentStream}
               />
             </div>
           </PromptInputFooter>
@@ -3096,16 +3138,22 @@ const AttachmentAwareSubmit: React.FC<{
   inputValue: string;
   isSending: boolean;
   selectedSkill: GeoAgentSkill | null;
-}> = ({ inputValue, isSending, selectedSkill }) => {
+  onStop?: () => void;
+}> = ({ inputValue, isSending, selectedSkill, onStop }) => {
   const attachments = usePromptInputAttachments();
 
   return (
     <PromptInputSubmit
       className="size-7 rounded-full bg-[#2f2f2f] text-white transition-all hover:bg-[#1f1f1f] disabled:bg-[#f3f3f1] disabled:text-[#b5b2ac] disabled:opacity-100 dark:bg-[#f1f1f1] dark:text-[#1b1b1b] dark:hover:bg-white dark:disabled:bg-[#252525] dark:disabled:text-[#666]"
-      disabled={(!inputValue.trim() && !selectedSkill && attachments.files.length === 0) || isSending}
-      status={isSending ? 'submitted' : 'ready'}
+      disabled={(!inputValue.trim() && !selectedSkill && attachments.files.length === 0) && !isSending}
+      status={isSending ? 'streaming' : 'ready'}
+      onStop={onStop}
     >
-      <ArrowUp className="size-3.5" />
+      {isSending ? (
+        <Square className="size-3.5 fill-current" />
+      ) : (
+        <Send className="size-3.5" />
+      )}
     </PromptInputSubmit>
   );
 };
@@ -3425,13 +3473,11 @@ const ChatBubble: React.FC<{
         {message.supportArticles && (
           <SupportArticlesCard
             result={message.supportArticles}
-            onSuggestionSelect={onSuggestionSelect}
           />
         )}
         {message.additionalArticles && (
           <AdditionalArticlesCard
             result={message.additionalArticles}
-            onSuggestionSelect={onSuggestionSelect}
           />
         )}
         {message.content && (
@@ -4079,8 +4125,7 @@ const ArticleDraftCard: React.FC<{ draft: GeoAgentGeoArticleDraft }> = ({ draft 
 
 const SupportArticlesCard: React.FC<{
   result: GeoAgentGeoSupportArticleRunResponse;
-  onSuggestionSelect: (suggestion: ChatSuggestion) => void;
-}> = ({ result, onSuggestionSelect }) => {
+}> = ({ result }) => {
   const supportDrafts = Array.isArray(result.support_drafts) ? result.support_drafts : [];
   const rankingDrafts = Array.isArray(result.ranking_drafts) ? result.ranking_drafts : [];
   const allDrafts = [...supportDrafts, ...rankingDrafts];
@@ -4094,31 +4139,6 @@ const SupportArticlesCard: React.FC<{
         <p className="mt-2 text-[13px] leading-relaxed text-on-surface-variant">
           已生成 9 篇内容资产，可前往稿件管理校对、AI 改稿、OSS 预览和投递。
         </p>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Button
-          className="h-8 rounded-full px-3 text-[12px]"
-          onClick={() => onSuggestionSelect({ label: '继续生成 1 篇', value: '继续生成 1 篇文章', actionType: 'send_message' })}
-          type="button"
-          variant="outline"
-        >
-          继续生成 1 篇
-        </Button>
-        <Button
-          className="h-8 rounded-full px-3 text-[12px]"
-          onClick={() => onSuggestionSelect({ label: '生成 3 篇支撑稿', value: '再生成 3 篇支撑稿', actionType: 'send_message' })}
-          type="button"
-          variant="outline"
-        >
-          生成 3 篇支撑稿
-        </Button>
-        <Button
-          className="h-8 rounded-full px-3 text-[12px]"
-          onClick={() => onSuggestionSelect({ label: '前往稿件管理', value: 'drafts', actionType: 'navigate', payload: { view: 'drafts' } })}
-          type="button"
-        >
-          前往稿件管理
-        </Button>
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         <SupportArticleSummaryCard draft={result.consulting_draft ?? null} label="企业/品牌支撑文章" />
@@ -4150,8 +4170,7 @@ const SupportArticlesCard: React.FC<{
 
 const AdditionalArticlesCard: React.FC<{
   result: NonNullable<ChatMessage['additionalArticles']>;
-  onSuggestionSelect: (suggestion: ChatSuggestion) => void;
-}> = ({ result, onSuggestionSelect }) => {
+}> = ({ result }) => {
   const drafts = Array.isArray(result.drafts) ? result.drafts : [];
   return (
     <div className="mb-5 space-y-4 border-b border-outline-variant/20 pb-5">
@@ -4176,23 +4195,6 @@ const AdditionalArticlesCard: React.FC<{
           ))}
         </div>
       )}
-      <div className="flex flex-wrap gap-2">
-        <Button
-          className="h-8 rounded-full px-3 text-[12px]"
-          onClick={() => onSuggestionSelect({ label: '再生成 1 篇排行榜稿', value: '再生成 1 篇排行榜稿', actionType: 'send_message' })}
-          type="button"
-          variant="outline"
-        >
-          再生成 1 篇排行榜稿
-        </Button>
-        <Button
-          className="h-8 rounded-full px-3 text-[12px]"
-          onClick={() => onSuggestionSelect({ label: '前往稿件管理', value: 'drafts', actionType: 'navigate', payload: { view: 'drafts' } })}
-          type="button"
-        >
-          前往稿件管理
-        </Button>
-      </div>
     </div>
   );
 };

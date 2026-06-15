@@ -4,6 +4,8 @@ const chaojimeijieService = require('./chaojimeijieService.cjs');
 const knowledgeService = require('./knowledgeService.cjs');
 const { fieldText } = require('./profileFieldService.cjs');
 const llmGateway = require('./llmGateway.cjs');
+const { getSkill } = require('./skillService.cjs');
+const { getTaskPolicy } = require('./modelPolicyService.cjs');
 
 function nowIso() {
   return new Date().toISOString();
@@ -395,6 +397,134 @@ function scoreResource(resource, draft, context) {
 
 // ─── AI 推荐 ───
 
+const DEFAULT_INDUSTRY_CLASSIFICATION_PROMPT = `分析以下文章的所属行业。从这些行业分类中选择最匹配的：食品、汽车、房产、教育、医疗、科技、金融、美妆、母婴、服装、体育、游戏、旅游、房产家居、娱乐。
+
+## 文章列表
+{articles}
+
+## 返回格式
+严格返回 JSON，不要其他内容：
+{ "1": "食品", "2": "汽车", ... }
+编号对应文章序号。`;
+
+const DEFAULT_RECOMMENDATION_PROMPT = `你是媒体投放专家。以下文章已确定行业分类，资源列表已按行业筛选。请为每篇文章推荐 3-4 个发稿渠道（优先级从高到低，排在前面的优先使用）。
+
+## 文章列表（已标注行业）
+{articles}
+
+## 行业匹配资源列表
+{resources}
+
+## 企业信息
+公司：{company}
+关键词：{keywords}
+
+## 选择规则
+1. 从行业匹配的资源中选择最合适的
+2. 有 GEO 标识的优先（收录率高）
+3. 出稿率高的优先
+4. 阅读量高的优先
+5. 同一资源不能同时推荐给多篇同类型文章
+
+## 返回格式
+严格返回 JSON，不要其他内容：
+{ "1": [{"id": 100, "reason": "最匹配行业"}, {"id": 200, "reason": "次匹配"}], "2": [{"id": 300, "reason": "..."}] }
+每篇文章至少推荐3个渠道，编号对应文章序号，数组按优先级排序。`;
+
+/**
+ * 加载自动发布 skill，返回 system prompt（带 fallback）
+ */
+function getAutoPublishSkillContent() {
+  const skill = getSkill('geo-auto-publish');
+  return skill?.content || null;
+}
+
+/**
+ * 构建行业分类消息
+ */
+function buildIndustryClassificationMessages(drafts) {
+  const skillContent = getAutoPublishSkillContent();
+  const systemContent = skillContent || '你是资深的媒体投放专家，擅长为 GEO 文章判断所属行业。请严格按用户消息中的 JSON 字段返回行业分类。';
+
+  const articleList = drafts.map((draft, i) => {
+    const title = text(draft.draft?.title);
+    const content = text(draft.draft?.content).slice(0, 200);
+    return `${i + 1}. 标题: ${title}\n   内容摘要: ${content}`;
+  });
+
+  const userContent = skillContent
+    ? JSON.stringify({
+        task: 'classify_article_industries',
+        industry_options: Object.keys(INDUSTRY_MAP),
+        articles: articleList,
+        required_output: { format: '{ "1": "行业名", "2": "行业名", ... }' },
+      })
+    : DEFAULT_INDUSTRY_CLASSIFICATION_PROMPT.replace('{articles}', articleList.join('\n'));
+
+  return [
+    { role: 'system', content: systemContent },
+    { role: 'user', content: userContent },
+  ];
+}
+
+/**
+ * 构建渠道推荐消息
+ */
+function buildRecommendationMessages(drafts, matchedResources, context, industryMap) {
+  const skillContent = getAutoPublishSkillContent();
+  const systemContent = skillContent || '你是资深的媒体投放专家，擅长为 GEO 文章推荐最优发稿渠道。请严格按用户消息中的 JSON 字段返回渠道推荐。';
+
+  const articleSummaries = drafts.map((draft, index) => {
+    const title = text(draft.draft?.title);
+    const role = text(draft.draft?.article_role) || draft.article_type || 'support';
+    const industry = industryMap?.[String(index + 1)] || '未知';
+    return `${index + 1}. ${title} | 类型:${role} | 行业:${industry}`;
+  });
+
+  const resourceSummaries = matchedResources.map(compressResourceSummary);
+
+  if (skillContent) {
+    return [
+      { role: 'system', content: systemContent },
+      {
+        role: 'user',
+        content: JSON.stringify({
+          task: 'recommend_publish_channels',
+          articles: articleSummaries,
+          resources: resourceSummaries,
+          enterprise: {
+            company: context.company || '未知',
+            keywords: context.keywords || '未知',
+          },
+          constraints: [
+            '从行业匹配的资源中选择最合适的',
+            '有 GEO 标识的优先',
+            '出稿率高的优先',
+            '阅读量高的优先',
+            '同一资源不能同时推荐给多篇同类型文章',
+          ],
+          required_output: {
+            format: '{ "1": [{"id": 100, "reason": "..."}], "2": [...] }',
+            min_recommendations_per_article: 3,
+          },
+        }),
+      },
+    ];
+  }
+
+  return [
+    { role: 'system', content: systemContent },
+    {
+      role: 'user',
+      content: DEFAULT_RECOMMENDATION_PROMPT
+        .replace('{articles}', articleSummaries.join('\n'))
+        .replace('{resources}', resourceSummaries.join('\n'))
+        .replace('{company}', context.company || '未知')
+        .replace('{keywords}', context.keywords || '未知'),
+    },
+  ];
+}
+
 /**
  * 压缩资源列表为摘要文本，减少 token 消耗
  */
@@ -424,41 +554,29 @@ function compressResourceSummary(resource) {
  */
 async function classifyArticleIndustries(drafts) {
   const LOG = '[autoPublish]';
-  const articleList = drafts.map((draft, i) => {
-    const title = text(draft.draft?.title);
-    const content = text(draft.draft?.content).slice(0, 200);
-    return `${i + 1}. 标题: ${title}\n   内容摘要: ${content}`;
-  });
-
-  const prompt = `分析以下文章的所属行业。从这些行业分类中选择最匹配的：食品、汽车、房产、教育、医疗、科技、金融、美妆、母婴、服装、体育、游戏、旅游、房产家居、娱乐。
-
-## 文章列表
-${articleList.join('\n')}
-
-## 返回格式
-严格返回 JSON，不要其他内容：
-{ "1": "食品", "2": "汽车", ... }
-编号对应文章序号。`;
+  const messages = buildIndustryClassificationMessages(drafts);
 
   console.log(`${LOG} [行业分析] 调用 AI 分析 ${drafts.length} 篇文章的行业...`);
   console.log(`${LOG} [行业分析] === Prompt ===`);
-  console.log(prompt);
+  console.log(JSON.stringify(messages, null, 2));
   console.log(`${LOG} [行业分析] === Prompt 结束 ===`);
 
   try {
+    const policy = getTaskPolicy('publish_channel_recommendation', { platform: 'deepseek' });
     const result = await llmGateway.chatJson({
-      provider: 'deepseek',
-      model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro',
-      messages: [{ role: 'user', content: prompt }],
+      provider: policy.provider,
+      model: policy.model,
+      messages,
       temperature: 0.1,
     });
     const json = result?.json;
     if (json && typeof json === 'object') {
+      const industryMap = json.industry_map || json;
       console.log(`${LOG} [行业分析] 结果:`);
-      for (const [idx, industry] of Object.entries(json)) {
+      for (const [idx, industry] of Object.entries(industryMap)) {
         console.log(`${LOG}   文章${idx} → ${industry}`);
       }
-      return json;
+      return industryMap;
     }
     return null;
   } catch (error) {
@@ -570,52 +688,22 @@ async function getAiRecommendations(drafts, resources, publishedOrders, context,
   }
 
   // ── 阶段 4：构建精准推荐 Prompt ──
-  const articleSummaries = drafts.map((draft, index) => {
-    const title = text(draft.draft?.title);
-    const role = text(draft.draft?.article_role) || draft.article_type || 'support';
-    const industry = industryMap[String(index + 1)] || '未知';
-    return `${index + 1}. ${title} | 类型:${role} | 行业:${industry}`;
-  });
+  const messages = buildRecommendationMessages(drafts, matchedResources, context, industryMap);
 
-  const resourceSummaries = matchedResources.map(compressResourceSummary);
-
-  const prompt = `你是媒体投放专家。以下文章已确定行业分类，资源列表已按行业筛选。请为每篇文章推荐 3-4 个发稿渠道（优先级从高到低，排在前面的优先使用）。
-
-## 文章列表（已标注行业）
-${articleSummaries.join('\n')}
-
-## 行业匹配资源列表
-${resourceSummaries.join('\n')}
-
-## 企业信息
-公司：${context.company || '未知'}
-关键词：${context.keywords || '未知'}
-
-## 选择规则
-1. 从行业匹配的资源中选择最合适的
-2. 有 GEO 标识的优先（收录率高）
-3. 出稿率高的优先
-4. 阅读量高的优先
-5. 同一资源不能同时推荐给多篇同类型文章
-
-## 返回格式
-严格返回 JSON，不要其他内容：
-{ "1": [{"id": 100, "reason": "最匹配行业"}, {"id": 200, "reason": "次匹配"}], "2": [{"id": 300, "reason": "..."}] }
-每篇文章至少推荐3个渠道，编号对应文章序号，数组按优先级排序。`;
-
-  console.log(`${LOG} [阶段4] Prompt 构建完成: 长度=${prompt.length} 字符`);
+  console.log(`${LOG} [阶段4] Prompt 构建完成`);
   console.log(`${LOG} [阶段4] === 完整 Prompt ===`);
-  console.log(prompt);
+  console.log(JSON.stringify(messages, null, 2));
   console.log(`${LOG} [阶段4] === Prompt 结束 ===`);
 
   // ── 阶段 5：调用 AI 推荐 ──
-  console.log(`${LOG} [阶段5] 调用模型: deepseek/${process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro'}`);
+  const policy = getTaskPolicy('publish_channel_recommendation', { platform: 'deepseek' });
+  console.log(`${LOG} [阶段5] 调用模型: ${policy.provider}/${policy.model || 'default'}`);
   const startTime = Date.now();
   try {
     const result = await llmGateway.chatJson({
-      provider: 'deepseek',
-      model: process.env.DEEPSEEK_MODEL || 'deepseek-v4-pro',
-      messages: [{ role: 'user', content: prompt }],
+      provider: policy.provider,
+      model: policy.model,
+      messages,
       temperature: 0.3,
     });
     const elapsed = Date.now() - startTime;
@@ -625,8 +713,9 @@ ${resourceSummaries.join('\n')}
     // ── 阶段 6：解析响应 ──
     const json = result?.json;
     if (json && typeof json === 'object') {
-      console.log(`${LOG} [阶段6] 解析成功: ${Object.keys(json).length} 篇文章有推荐`);
-      for (const [articleIdx, recs] of Object.entries(json)) {
+      const recommendations = json.recommendations || json;
+      console.log(`${LOG} [阶段6] 解析成功: ${Object.keys(recommendations).length} 篇文章有推荐`);
+      for (const [articleIdx, recs] of Object.entries(recommendations)) {
         if (Array.isArray(recs)) {
           for (const rec of recs) {
             const matchedResource = matchedResources.find((r) => r.resource_id === Number(rec.id));
@@ -636,7 +725,7 @@ ${resourceSummaries.join('\n')}
         }
       }
       console.log(`${LOG} ========== AI 推荐流程结束（成功）==========\n`);
-      return { recommendations: json, matchedResources };
+      return { recommendations, matchedResources };
     }
     console.warn(`${LOG} [阶段6] AI 返回非对象:`, typeof json, result);
     console.log(`${LOG} ========== AI 推荐流程结束（解析失败）==========\n`);
@@ -721,13 +810,24 @@ async function autoPublishArticles(projectId, options = {}) {
   const context = getEnterpriseContext(projectId);
 
   // 4. 筛选待发布稿件
-  const toPublish = drafts.filter((d) => {
+  let toPublish = drafts.filter((d) => {
     const role = text(d.draft?.article_role);
     const roleMatch = role === articleRole || (!role && d.article_type?.includes(articleRole));
     const status = text(d.draft?.publication_evidence?.status || d.status);
     const statusMatch = !['published', 'publishing', 'archived'].includes(status);
     return roleMatch && statusMatch;
-  }).slice(0, maxArticles);
+  });
+
+  // 排行榜稿件受配额限制
+  if (articleRole === 'ranking') {
+    const quota = articlePublishService.getRankedPublishQuota(projectId);
+    if (!quota.isUnlimited && quota.remaining < toPublish.length) {
+      console.log(`[autoPublish] 排行榜稿件配额限制：可发 ${quota.remaining} 篇，待发 ${toPublish.length} 篇`);
+      toPublish = toPublish.slice(0, Math.max(0, quota.remaining));
+    }
+  }
+
+  toPublish = toPublish.slice(0, maxArticles);
 
   // 4.5 确保资源已同步
   const syncStatus = chaojimeijieService.needsSync();

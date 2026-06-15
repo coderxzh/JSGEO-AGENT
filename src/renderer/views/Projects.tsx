@@ -1,19 +1,100 @@
-import React, { useState } from 'react';
-import { Plus, MoreVertical, X } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { FolderOpen, MoreVertical, RefreshCw } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '../components/ui/tooltip';
+
+const STAGE_SHORT_LABELS: Record<number, string> = {
+  1: '知识库',
+  2: '问题池',
+  3: '信源发现',
+  4: '内容生成',
+  5: '发布管理',
+  6: '可见性检测',
+  7: '反思优化',
+};
+
+const STAGE_DESCRIPTIONS: Record<number, string> = {
+  1: '企业知识库已建立',
+  2: '基于企业画像生成 AI 问题池',
+  3: '使用豆包助手联网发现真实信源',
+  4: '生成支撑文章与排行榜文章草稿',
+  5: '稿件校对、预览、发布与订单同步',
+  6: '检测 AI 推荐可见性与排名变化',
+  7: '基于可见性结果生成并确认优化规则',
+};
+
+const GRADIENTS = [
+  'from-pink-100 to-pink-200',
+  'from-indigo-100 to-indigo-200',
+  'from-emerald-100 to-emerald-200',
+  'from-amber-100 to-amber-200',
+  'from-sky-100 to-sky-200',
+  'from-rose-100 to-rose-200',
+  'from-violet-100 to-violet-200',
+  'from-teal-100 to-teal-200',
+];
+
+const PLATFORM_LABELS: Record<string, string> = {
+  doubao: '豆包',
+  deepseek: 'DeepSeek',
+};
 
 export function Projects() {
-  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [projects, setProjects] = useState<GeoAgentProjectSummaryWithProgress[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadProjects = async () => {
+    if (!window.geoAgent?.getProjectSummaries) {
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await window.geoAgent.getProjectSummaries();
+      setProjects(response.projects ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProjects();
+    const handleRefresh = () => loadProjects();
+    window.addEventListener('geo-agent-enterprises-refresh', handleRefresh);
+    return () => window.removeEventListener('geo-agent-enterprises-refresh', handleRefresh);
+  }, []);
+
+  const handleToggleReflection = async (projectId: string, enabled: boolean) => {
+    if (!window.geoAgent?.setReflectionEnabled) return;
+
+    try {
+      await window.geoAgent.setReflectionEnabled(projectId, enabled);
+      setProjects((prev) =>
+        prev.map((p) => (p.id === projectId ? { ...p, reflection_enabled: enabled } : p))
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   return (
     <div className="p-4 sm:p-6 md:p-8 lg:p-xl max-w-7xl mx-auto flex flex-col gap-8 min-h-full">
-      
       {/* Header */}
       <div className="flex flex-col lg:flex-row justify-between items-center gap-8 bg-[#203328] text-white rounded-[20px] p-8 md:p-12 mb-2 border-transparent">
         <div className="space-y-3 max-w-2xl w-full">
           <div className="flex items-center gap-2">
-             <span className="text-[14px] font-bold text-[#86efac] tracking-wide leading-none">
+            <span className="text-[14px] font-bold text-[#86efac] tracking-wide leading-none">
               Project Management
             </span>
           </div>
@@ -21,15 +102,6 @@ export function Projects() {
           <p className="text-[16px] text-white/80 leading-relaxed mt-2">
             跨不同行业的大模型召回率、推荐顺位及数字资产建设任务列表。
           </p>
-          <motion.button 
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={() => setIsModalOpen(true)}
-            className="mt-4 px-4 py-2 bg-[#44914c] text-white hover:bg-[#34783a] text-[13px] font-bold rounded flex items-center gap-2 shrink-0 transition-colors cursor-pointer w-fit"
-          >
-            <Plus className="w-4 h-4" />
-            创建新优化项目
-          </motion.button>
         </div>
         <div className="w-[240px] h-[160px] shrink-0 flex items-center justify-center relative select-none hidden md:flex text-white">
           <svg viewBox="0 0 200 120" className="w-full h-full text-white" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -44,124 +116,270 @@ export function Projects() {
         </div>
       </div>
 
-      {/* Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        <ProjectCard 
-          index={0}
-          letter="X" name="成都行乐音改" desc="优化温饱与发烧多阶音响升级及全无损降噪的 LLM 推荐率，全面占领豆包与 DeepSeek 检索白名单。"
-          tag="豆包/DeepSeek 并行" progress={89} gradient="from-pink-100 to-pink-200"
-        />
-        <ProjectCard 
-          index={1}
-          letter="J" name="佳祺食品预制菜" desc="构建B2B配货完备度及高标准食材资质自检，提升大模型在预制菜推荐及评级中的引用提及率。"
-          tag="自查与自检阶段" progress={42} gradient="from-indigo-100 to-indigo-200"
-        />
-        <ProjectCard 
-          index={2}
-          letter="D" name="鼎客数码相机" desc="建立数码器材品牌正品授权及高端套件评测知识图谱，增加高权重自媒体投放，提高RAG检索命中度。"
-          tag="长期进化中" progress={94} gradient="from-emerald-100 to-emerald-200"
-        />
-        <ProjectCard 
-          index={3}
-          letter="A" name="安诺同城口腔" desc="整合本地门诊多店地理坐标及IASCA资质，进行第一波同城地图SEO及长尾词首发分发基建工作。"
-          tag="新建基建阶段" progress={5} gradient="from-amber-100 to-amber-200"
-        />
+      {/* Toolbar */}
+      <div className="flex items-center justify-end">
+        <button
+          onClick={loadProjects}
+          disabled={isLoading}
+          className="flex items-center gap-2 px-3 py-1.5 text-[12px] font-medium text-on-surface-variant hover:text-primary hover:bg-surface-container rounded-md transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={cn('w-3.5 h-3.5', isLoading && 'animate-spin')} />
+          刷新
+        </button>
       </div>
 
-      {/* Modal Drop-in */}
+      {/* Error */}
       <AnimatePresence>
-        {isModalOpen && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-[100] bg-primary/20 backdrop-blur-sm flex items-center justify-center p-4"
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900/50 p-4 text-[13px] text-red-700 dark:text-red-300"
           >
-            <motion.div 
-              initial={{ scale: 0.95, opacity: 0, y: 15 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.95, opacity: 0, y: 15 }}
-              transition={{ type: "spring", damping: 25, stiffness: 350 }}
-              className="bg-surface border border-outline-variant/60 w-full max-w-lg rounded-2xl flex flex-col relative overflow-hidden"
-            >
-              <div className="p-6 border-b border-outline-variant/20 flex justify-between items-center bg-surface/50 backdrop-blur-md">
-                <h3 className="text-[24px] font-bold text-primary">新优化项目</h3>
-                <button onClick={() => setIsModalOpen(false)} className="text-on-surface-variant hover:text-primary transition-colors p-1 rounded-md hover:bg-surface-container">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-              
-              <div className="p-6 flex flex-col gap-6">
-                <div className="flex flex-col gap-2">
-                  <label className="text-[11px] font-bold text-on-surface uppercase tracking-wider">客户公司/品牌简称</label>
-                  <input type="text" placeholder="例如：成都行乐音改" className="w-full rounded-md border border-outline bg-surface-container px-4 py-2.5 text-[14px] focus:outline-none focus:border-secondary focus:ring-1 focus:ring-secondary transition-all" />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <label className="text-[11px] font-bold text-on-surface uppercase tracking-wider">业务行业与主营业务</label>
-                  <textarea rows={2} placeholder="描述优化目标与核心优势物料..." className="w-full rounded-md border border-outline bg-surface-container px-4 py-2.5 text-[14px] focus:outline-none focus:border-secondary focus:ring-1 focus:ring-secondary transition-all resize-none" />
-                </div>
-                <div className="flex flex-col gap-2">
-                  <label className="text-[11px] font-bold text-on-surface uppercase tracking-wider">预设关键字（用逗号隔开，首字母重塑为预设逻辑词）</label>
-                  <input type="text" placeholder="成都汽车音响改装, 隔音工程" className="w-full rounded-md border border-outline bg-surface-container px-4 py-2.5 font-mono text-[13px] focus:outline-none focus:border-secondary focus:ring-1 focus:ring-secondary transition-all" />
-                </div>
-              </div>
-
-              <div className="p-6 border-t border-outline-variant/20 flex justify-end gap-3 bg-surface/50 backdrop-blur-md">
-                <button onClick={() => setIsModalOpen(false)} className="px-5 py-2.5 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant hover:text-primary hover:bg-surface-container transition-all rounded-md">
-                  取消
-                </button>
-                <button onClick={() => setIsModalOpen(false)} className="bg-secondary text-on-secondary hover:opacity-90 text-[11px] font-bold uppercase tracking-wider px-6 py-2.5 rounded-md hover:opacity-90 transition-opacity ">
-                  开启 7 阶段流转
-                </button>
-              </div>
-            </motion.div>
+            {error}
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Grid */}
+      {isLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl p-6 h-[280px] animate-pulse" />
+          ))}
+        </div>
+      ) : projects.length === 0 ? (
+        <div className="mt-10 rounded-2xl border border-dashed border-outline-variant/70 bg-surface/70 p-12 text-center">
+          <FolderOpen className="mx-auto size-8 text-on-surface-variant" />
+          <h3 className="mt-3 text-[16px] font-bold text-primary">暂无企业项目</h3>
+          <p className="mt-2 text-[13px] text-on-surface-variant">
+            请先在知识库中录入企业资料，录入后此处会自动展示项目进度。
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+          {projects.map((project, index) => (
+            <div key={project.id}>
+              <ProjectCard
+                project={project}
+                index={index}
+                onToggleReflection={(enabled) => handleToggleReflection(project.id, enabled)}
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function ProjectCard({ letter, name, desc, tag, progress, gradient, index }: any) {
+function ProjectCard({
+  project,
+  index,
+  onToggleReflection,
+}: {
+  project: GeoAgentProjectSummaryWithProgress;
+  index: number;
+  onToggleReflection: (enabled: boolean) => void;
+}) {
+  const letter = useMemo(() => {
+    const name = project.company_name || project.name || '';
+    return name.charAt(0).toUpperCase();
+  }, [project.company_name, project.name]);
+
+  const gradient = GRADIENTS[index % GRADIENTS.length];
+  const reachedReflection =
+    project.platforms.doubao.stage_7.status !== 'not_started' ||
+    project.platforms.deepseek.stage_7.status !== 'not_started';
+
+  const tag = useMemo(() => {
+    if (project.overall_progress >= 90) return '长期进化中';
+    if (project.overall_progress >= 60) return '豆包/DeepSeek 并行';
+    if (project.overall_progress >= 30) return '自查与自检阶段';
+    return '新建基建阶段';
+  }, [project.overall_progress]);
+
   return (
-    <motion.div 
+    <motion.div
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, delay: index * 0.08, ease: "easeOut" }}
-      whileHover={{ y: -4, boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.05)" }}
-      className="bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl p-6  relative overflow-hidden group flex flex-col"
+      transition={{ duration: 0.35, delay: index * 0.08, ease: 'easeOut' }}
+      whileHover={{ y: -4, boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.05)' }}
+      className="bg-[#f7f7f5] dark:bg-surface-variant/45 rounded-2xl p-6 relative overflow-hidden group flex flex-col"
     >
-      <div className="flex justify-between items-start mb-6">
-        <div className={cn("w-12 h-12 rounded-full border border-outline-variant/10  flex items-center justify-center bg-gradient-to-br", gradient)}>
+      <div className="flex justify-between items-start mb-4">
+        <div className={cn('w-12 h-12 rounded-full border border-outline-variant/10 flex items-center justify-center bg-gradient-to-br', gradient)}>
           <span className="text-[24px] font-extrabold text-slate-800 opacity-75">{letter}</span>
         </div>
-        <span className="bg-[#f7f7f5] dark:bg-surface-variant/45 text-on-surface-variant font-mono text-[11px] px-2.5 py-1 rounded-md border-transparent bg-[#f7f7f5] dark:bg-surface-variant/45 font-medium">
+        <span className="text-on-surface-variant font-mono text-[11px] px-2.5 py-1 rounded-md border border-outline-variant/10 bg-white/60 dark:bg-surface-variant/60 font-medium">
           {tag}
         </span>
       </div>
-      
-      <h3 className="text-[20px] font-bold text-primary font-heading mb-2 group-hover:text-secondary transition-colors cursor-pointer">{name}</h3>
-      <p className="text-[14px] text-on-surface-variant mb-8 flex-1">{desc}</p>
-      
+
+      <h3 className="text-[20px] font-bold text-primary font-heading mb-1 group-hover:text-secondary transition-colors cursor-pointer">
+        {project.company_name || project.name}
+      </h3>
+      <p className="text-[12px] text-on-surface-variant/70 mb-4">
+        {project.industry_category || '未填写行业'}
+      </p>
+
+      <div className="space-y-3 mb-5">
+        {(['doubao', 'deepseek'] as const).map((platform) => (
+          <div key={platform}>
+            <StageTimeline
+              platform={platform}
+              stage1={project.stage_1}
+              stages={project.platforms[platform]}
+            />
+          </div>
+        ))}
+      </div>
+
+      {reachedReflection && (
+        <div className="flex items-center justify-between mb-5 px-3 py-2 rounded-lg bg-surface-container/50 border border-outline-variant/10">
+          <div className="flex flex-col">
+            <span className="text-[12px] font-medium text-primary">反思优化</span>
+            <span className="text-[10px] text-on-surface-variant">
+              {project.reflection_enabled ? '自动学习调度器会处理该企业' : '自动学习调度器会忽略该企业'}
+            </span>
+          </div>
+          <ReflectionToggle enabled={project.reflection_enabled} onChange={onToggleReflection} />
+        </div>
+      )}
+
       <div className="mt-auto">
         <div className="flex justify-between font-mono text-[11px] text-on-surface-variant mb-2 font-medium">
           <span>优化进度</span>
-          <span>{progress}%</span>
+          <span>{project.overall_progress}%</span>
         </div>
         <div className="w-full h-1.5 bg-surface-container rounded-full overflow-hidden">
-          <motion.div 
+          <motion.div
             initial={{ width: 0 }}
-            animate={{ width: `${progress}%` }}
-            transition={{ duration: 0.8, delay: 0.3 + index * 0.08, ease: "circOut" }}
-            className="h-full bg-primary" 
+            animate={{ width: `${project.overall_progress}%` }}
+            transition={{ duration: 0.8, delay: 0.3 + index * 0.08, ease: 'circOut' }}
+            className="h-full bg-primary"
           />
         </div>
       </div>
 
       <div className="absolute top-6 right-6 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button className="text-on-surface-variant hover:text-primary p-2 hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45 rounded-md"><MoreVertical className="w-5 h-5" /></button>
+        <button className="text-on-surface-variant hover:text-primary p-2 hover:bg-[#f7f7f5] dark:hover:bg-surface-variant/45 rounded-md">
+          <MoreVertical className="w-5 h-5" />
+        </button>
       </div>
     </motion.div>
+  );
+}
+
+function StageTimeline({
+  platform,
+  stage1,
+  stages,
+}: {
+  platform: 'doubao' | 'deepseek';
+  stage1: GeoAgentProjectStageStatus;
+  stages: GeoAgentProjectPlatformStages;
+}) {
+  const stageList = [
+    stage1,
+    stages.stage_2,
+    stages.stage_3,
+    stages.stage_4,
+    stages.stage_5,
+    stages.stage_6,
+    stages.stage_7,
+  ];
+
+  return (
+    <TooltipProvider>
+      <div className="flex items-center gap-1">
+        <span className="text-[10px] font-medium text-on-surface-variant w-14 shrink-0">
+          {PLATFORM_LABELS[platform]}
+        </span>
+        <div className="flex items-center flex-1">
+          {stageList.map((stage, idx) => (
+            <React.Fragment key={stage.key}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex flex-col items-center gap-1 cursor-pointer">
+                    <StageDot status={stage.status} pendingRules={stage.pending_rules} />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-[11px]">
+                  <div className="font-medium">{stage.label}</div>
+                  <div className="text-on-background/70">{STAGE_DESCRIPTIONS[stage.stage]}</div>
+                  {stage.pending_rules !== undefined && stage.pending_rules > 0 && (
+                    <div className="mt-1 text-amber-300">待确认规则：{stage.pending_rules} 条</div>
+                  )}
+                </TooltipContent>
+              </Tooltip>
+              {idx < stageList.length - 1 && (
+                <div
+                  className={cn(
+                    'h-0.5 flex-1 min-w-[8px] mx-0.5',
+                    stage.status === 'completed' ? 'bg-primary' : 'bg-outline-variant/30'
+                  )}
+                />
+              )}
+            </React.Fragment>
+          ))}
+        </div>
+      </div>
+    </TooltipProvider>
+  );
+}
+
+function StageDot({ status, pendingRules }: { status: string; pendingRules?: number }) {
+  if (status === 'completed') {
+    return (
+      <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center">
+        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+        </svg>
+      </div>
+    );
+  }
+
+  if (status === 'pending' || pendingRules && pendingRules > 0) {
+    return (
+      <div className="relative w-5 h-5 rounded-full bg-amber-400 flex items-center justify-center">
+        <span className="absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75 animate-ping" />
+        <span className="relative text-[9px] font-bold text-white">{pendingRules || ''}</span>
+      </div>
+    );
+  }
+
+  if (status === 'ready' || status === 'in_progress') {
+    return (
+      <div className="w-5 h-5 rounded-full border-2 border-primary bg-surface" />
+    );
+  }
+
+  return (
+    <div className="w-5 h-5 rounded-full border-2 border-outline-variant/40 bg-surface" />
+  );
+}
+
+function ReflectionToggle({ enabled, onChange }: { enabled: boolean; onChange: (enabled: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      onClick={() => onChange(!enabled)}
+      className={cn(
+        'relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        enabled ? 'bg-primary' : 'bg-surface-container border border-outline-variant'
+      )}
+    >
+      <span
+        className={cn(
+          'pointer-events-none block h-4 w-4 rounded-full bg-white shadow-sm ring-0 transition-transform',
+          enabled ? 'translate-x-4.5' : 'translate-x-0.5'
+        )}
+        style={{ marginTop: '1.5px' }}
+      />
+    </button>
   );
 }

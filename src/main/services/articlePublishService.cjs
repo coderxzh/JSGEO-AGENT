@@ -483,10 +483,17 @@ function recordPublishedUrl(articleId, payload = {}) {
 
 function applySyncedOrderToDraft(articleId, order) {
   const draft = articleDraftService.getArticleDraft(articleId);
+  const currentEvidence = draft.draft.publication_evidence || {};
+
+  // 已归档稿件不再被订单同步恢复，保留归档状态
+  if (text(currentEvidence.status || draft.status) === 'archived') {
+    return draft;
+  }
+
   const publishStatus = chaojimeijieService.mapOrderStatus(order.status_code);
   return saveDraftWithStatus(articleId, {
     publication_evidence: {
-      ...(draft.draft.publication_evidence || {}),
+      ...currentEvidence,
       status: publishStatus,
       adapter_id: 'chaojimeijie',
       provider: 'chaojimeijie',
@@ -498,9 +505,9 @@ function applySyncedOrderToDraft(articleId, order) {
       status_code: order.status_code,
       feedback: order.feedback || null,
       last_synced_at: order.last_synced_at || nowIso(),
-      published_url: order.published_url || publicationOf(draft).published_url || null,
-      published_platform: order.published_url ? '超级媒介' : publicationOf(draft).published_platform || null,
-      published_at: order.raw?.published_at || publicationOf(draft).published_at || (order.published_url ? nowIso() : null),
+      published_url: order.published_url || currentEvidence.published_url || null,
+      published_platform: order.published_url ? '超级媒介' : currentEvidence.published_platform || null,
+      published_at: order.raw?.published_at || currentEvidence.published_at || (order.published_url ? nowIso() : null),
     },
   }, publishStatus);
 }
