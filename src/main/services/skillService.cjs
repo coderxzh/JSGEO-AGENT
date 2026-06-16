@@ -101,10 +101,21 @@ function getSkill(skillName) {
   return loadSkill(skillName);
 }
 
+/**
+ * 批量加载多个 skill
+ * @param {string[]} skillNames
+ * @returns {object[]}
+ */
+function getSkills(skillNames) {
+  if (!Array.isArray(skillNames)) return [];
+  return skillNames.map(loadSkill).filter(Boolean);
+}
+
 module.exports = {
   loadSkill,
   loadAllSkills,
   getUserSkills,
   getInternalSkills,
   getSkill,
+  getSkills,
 };

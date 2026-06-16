@@ -494,7 +494,8 @@ ${previousPagesSummary || '（这是第一个页面）'}
 ## 品牌配置
 
 品牌主色：${brandColor}
-生成页面时，必须将该颜色作为主题主色使用：用于按钮背景、重点标题、链接、悬停状态、关键装饰线等。不要只使用默认蓝色或黑色。`;
+字体栈：${sitePlan.font_family || 'system-ui, -apple-system, sans-serif'}
+请将该颜色作为主题主色：用于 CTA 按钮、重点标题、链接、悬停状态、关键装饰线。基于主色派生一个辅助色（降低饱和度/亮度），用于次要按钮、标签、背景点缀等。禁止使用默认蓝色或黑色作为主色。`;
 
   return [
     { role: 'system', content: systemPrompt },
@@ -546,14 +547,18 @@ async function generateWebsite(projectId, options = {}, onEvent = null) {
     // 1. 加载知识上下文
     const knowledgeContext = await buildKnowledgeContext(projectId);
 
-    // 2. 加载 skill
-    const skill = skillService.getSkill('web-builder-seo');
-    if (!skill) throw new Error('找不到 web-builder-seo 技能文件');
-    const skillContent = skill.content;
+    // 2. 加载 skills
+    const seoSkill = skillService.getSkill('web-builder-seo');
+    if (!seoSkill) throw new Error('找不到 web-builder-seo 技能文件');
+    const seoSkillContent = seoSkill.content;
+
+    const designSkill = skillService.getSkill('web-builder-design');
+    if (!designSkill) throw new Error('找不到 web-builder-design 技能文件');
+    const combinedSkillContent = `${seoSkillContent}\n\n${designSkill.content}`;
 
     // 3. Phase 1 — 生成站点规划
     onEvent?.({ type: 'status', message: '正在生成站点规划...' });
-    const planMessages = buildPlanMessages(skillContent, knowledgeContext, userRequirements, brandColor);
+    const planMessages = buildPlanMessages(seoSkillContent, knowledgeContext, userRequirements, brandColor);
     const planPolicy = getTaskPolicy('website_generation');
 
     const planResult = await streamLLM({
@@ -631,7 +636,7 @@ async function generateWebsite(projectId, options = {}, onEvent = null) {
 
       try {
         const pageMessages = buildPageMessages(
-          skillContent, sitePlan, pageInfo, knowledgeContext, previousSummary, brandColor
+          combinedSkillContent, sitePlan, pageInfo, knowledgeContext, previousSummary, brandColor
         );
 
         const pageResult = await streamLLM({

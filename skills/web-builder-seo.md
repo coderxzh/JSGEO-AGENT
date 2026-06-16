@@ -164,12 +164,11 @@ output_contract: website_plan
 
 ### 技术规范
 
-- 内联 CSS，不依赖外部样式表
-- 响应式设计：使用 CSS Flexbox/Grid + `@media (max-width: 768px)` 断点
-- 支持暗色模式：`@media (prefers-color-scheme: dark)` 或 JS 主题切换
-- 每页共享相同的导航栏和页脚 HTML 结构
-- 导航栏当前页面使用 `aria-current="page"` 标记
-- 页脚包含：公司名称、地址、电话、邮箱、版权信息
+- 内联 CSS，不依赖外部样式表。
+- 响应式与暗色模式：遵循「视觉与交互设计规范」中的移动优先断点、间距系统、色彩系统与深色模式规则。
+- 每页共享相同的导航栏和页脚 HTML 结构。
+- 导航栏当前页面使用 `aria-current="page"` 标记。
+- 页脚包含：公司名称、地址、电话、邮箱、版权信息。
 
 ### 禁止事项
 

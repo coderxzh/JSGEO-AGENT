@@ -2227,7 +2227,7 @@ export function AgentStudio() {
     }
   };
 
-  const confirmPhaseTwo = async (messageId: string, project: GeoAgentGeoProject, platform: 'doubao' | 'deepseek' = AUTO_PLATFORM) => {
+  const confirmPhaseTwo = async (messageId: string, project: GeoAgentGeoProject, platform: 'doubao' | 'deepseek' = AUTO_PLATFORM, inheritedRetryableStage?: RetryableStage | null) => {
     const lockKey = stageRunKey(project.id, platform, 2);
     if (stageInFlightRef.current.has(lockKey) || runningStageKeys.has(lockKey)) {
       return;
@@ -2258,6 +2258,7 @@ export function AgentStudio() {
         companyName: project.company_name,
         activeStep: 0,
       },
+      retryableStage: inheritedRetryableStage ?? undefined,
       status: 'streaming',
     }));
     setMessages((current) => updateMessage(current, messageId, {
@@ -2404,7 +2405,7 @@ export function AgentStudio() {
     }
   };
 
-  const runSourceDiscoveryFromReport = async (messageId: string, report: GeoAgentGeoReport) => {
+  const runSourceDiscoveryFromReport = async (messageId: string, report: GeoAgentGeoReport, inheritedRetryableStage?: RetryableStage | null) => {
     const platform = report.platform === 'deepseek' ? 'deepseek' : 'doubao';
     const lockKey = stageRunKey(report.geo_project_id, platform, 3);
     if (stageInFlightRef.current.has(lockKey) || runningStageKeys.has(lockKey)) {
@@ -2437,6 +2438,7 @@ export function AgentStudio() {
         geoProjectId: report.geo_project_id,
         phaseTwoPlatform: platform,
         sourceDiscoveryExecution: { platform, activeStep: 0 },
+        retryableStage: inheritedRetryableStage ?? undefined,
         status: 'streaming',
       }));
       return stageMessageId;
@@ -2785,9 +2787,9 @@ export function AgentStudio() {
         if (!project) {
           throw new Error('无法获取对应 GEO 项目，请刷新页面后重试。');
         }
-        await confirmPhaseTwo(messageId, project, platform);
+        await confirmPhaseTwo(messageId, project, platform, retryable);
       } else if (phase === 3 && payload.report) {
-        await runSourceDiscoveryFromReport(messageId, payload.report);
+        await runSourceDiscoveryFromReport(messageId, payload.report, retryable);
       } else if (phase === 4 && payload.discovery) {
         await runSupportArticlesFromDiscovery(messageId, payload.discovery);
       }
