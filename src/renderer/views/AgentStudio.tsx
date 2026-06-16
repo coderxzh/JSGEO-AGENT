@@ -537,6 +537,10 @@ function getNextWorkflowAction(
   const phaseThreeBlocked = platform && runningStageKeys.has(stageRunKey(message.geoReport?.geo_project_id, platform, 3));
   const phaseFourBlocked = platform && runningStageKeys.has(stageRunKey(message.sourceDiscovery?.geo_project_id, platform, 4));
 
+  if (message.status === 'error') {
+    return null;
+  }
+
   if (
     message.geoReport?.status === 'completed'
     && !message.sourceDiscovery
@@ -2373,23 +2377,27 @@ export function AgentStudio() {
       window.dispatchEvent(new CustomEvent('geo-agent-geo-project-changed', { detail: { projectId: project.project_id, geoProjectId: project.id } }));
     } catch (error) {
       const errorMessage = normalizeChatError(error);
-      setMessages((current) => updateMessage(current, phaseTwoTargetId, {
-        content: errorMessage,
-        phaseTwoExecution: undefined,
-        confirmationState: 'output-available',
-        confirmationApproved: undefined,
-        actionBusy: false,
-        status: 'error',
-        error: errorMessage,
-        retryableStage: {
-          phase: 2,
-          platform,
-          geoProjectId: project.id,
-          payload: {},
-          originalError: errorMessage,
-          attemptCount: 1,
-          maxAttempts: 3,
-        },
+      setMessages((current) => updateMessage(current, phaseTwoTargetId, (msg) => {
+        const previousAttempt = msg.retryableStage?.attemptCount ?? 0;
+        return {
+          ...msg,
+          content: errorMessage,
+          phaseTwoExecution: undefined,
+          confirmationState: 'output-available',
+          confirmationApproved: undefined,
+          actionBusy: false,
+          status: 'error',
+          error: errorMessage,
+          retryableStage: {
+            phase: 2,
+            platform,
+            geoProjectId: project.id,
+            payload: {},
+            originalError: errorMessage,
+            attemptCount: previousAttempt + 1,
+            maxAttempts: 3,
+          },
+        };
       }));
     } finally {
       stageInFlightRef.current.delete(lockKey);
@@ -2540,21 +2548,25 @@ export function AgentStudio() {
     } catch (error) {
       const targetId = ensureStageMessage();
       const errorMessage = normalizeChatError(error);
-      setMessages((current) => updateMessage(current, targetId, {
-        content: `${errorMessage}\n\n我已经尝试从当前阶段二结果回填问题池。若仍失败，说明当前消息里没有可用的排行榜问题池结构，需要重新执行阶段二问题池构建。`,
-        sourceDiscoveryExecution: undefined,
-        sourceDiscoveryAttempted: true,
-        status: 'error',
-        error: errorMessage,
-        retryableStage: {
-          phase: 3,
-          platform,
-          geoProjectId: report.geo_project_id,
-          payload: { report },
-          originalError: errorMessage,
-          attemptCount: 1,
-          maxAttempts: 3,
-        },
+      setMessages((current) => updateMessage(current, targetId, (msg) => {
+        const previousAttempt = msg.retryableStage?.attemptCount ?? 0;
+        return {
+          ...msg,
+          content: `${errorMessage}\n\n我已经尝试从当前阶段二结果回填问题池。若仍失败，说明当前消息里没有可用的排行榜问题池结构，需要重新执行阶段二问题池构建。`,
+          sourceDiscoveryExecution: undefined,
+          sourceDiscoveryAttempted: true,
+          status: 'error',
+          error: errorMessage,
+          retryableStage: {
+            phase: 3,
+            platform,
+            geoProjectId: report.geo_project_id,
+            payload: { report },
+            originalError: errorMessage,
+            attemptCount: previousAttempt + 1,
+            maxAttempts: 3,
+          },
+        };
       }));
     } finally {
       stageInFlightRef.current.delete(lockKey);
@@ -2705,24 +2717,28 @@ export function AgentStudio() {
       window.dispatchEvent(new CustomEvent('geo-agent-geo-project-changed', { detail: { projectId: discovery.enterprise_project_id, geoProjectId: discovery.geo_project_id } }));
     } catch (error) {
       const errorMessage = normalizeChatError(error);
-      setMessages((current) => updateMessage(current, stageMessageId, {
-        content: errorMessage,
-        articleDraftExecution: undefined,
-        confirmationState: 'approval-requested',
-        confirmationApproved: undefined,
-        actionBusy: false,
-        supportArticlesPrompt: discovery,
-        status: 'error',
-        error: errorMessage,
-        retryableStage: {
-          phase: 4,
-          platform,
-          geoProjectId: discovery.geo_project_id,
-          payload: { discovery },
-          originalError: errorMessage,
-          attemptCount: 1,
-          maxAttempts: 3,
-        },
+      setMessages((current) => updateMessage(current, stageMessageId, (msg) => {
+        const previousAttempt = msg.retryableStage?.attemptCount ?? 0;
+        return {
+          ...msg,
+          content: errorMessage,
+          articleDraftExecution: undefined,
+          confirmationState: 'approval-requested',
+          confirmationApproved: undefined,
+          actionBusy: false,
+          supportArticlesPrompt: discovery,
+          status: 'error',
+          error: errorMessage,
+          retryableStage: {
+            phase: 4,
+            platform,
+            geoProjectId: discovery.geo_project_id,
+            payload: { discovery },
+            originalError: errorMessage,
+            attemptCount: previousAttempt + 1,
+            maxAttempts: 3,
+          },
+        };
       }));
     } finally {
       stageInFlightRef.current.delete(lockKey);

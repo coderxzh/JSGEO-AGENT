@@ -200,7 +200,7 @@ contextBridge.exposeInMainWorld('geoAgent', {
   confirmSourceDiscovery: (discoveryId) => ipcRenderer.invoke('geo-agent:confirm-source-discovery', discoveryId),
   runGeoArticleDraft: (geoProjectId, platform, articleType, options = {}) => ipcRenderer.invoke('geo-agent:run-geo-article-draft', geoProjectId, platform, articleType, options),
   runGeoSupportArticles: (geoProjectId, platform, options = {}) => ipcRenderer.invoke('geo-agent:run-geo-support-articles', geoProjectId, platform, options),
-  runGeoSupportArticlesStream: (geoProjectId, platform, options = {}, onEvent) => invokeStream('geo-agent:run-geo-support-articles-stream', { geoProjectId, platform, options }, onEvent),
+  runGeoSupportArticlesStream: (geoProjectId, platform, options = {}, onEvent) => invokeStream('geo-agent:run-geo-support-articles-stream', { geoProjectId, platform, options }, onEvent, 900000),
   runGeoAdditionalArticlesStream: (geoProjectId, platform, options = {}, onEvent) => invokeStream('geo-agent:run-geo-additional-articles-stream', { geoProjectId, platform, options }, onEvent),
   getLatestGeoArticleDraft: (geoProjectId, platform, articleType) => ipcRenderer.invoke('geo-agent:get-latest-geo-article-draft', geoProjectId, platform, articleType),
   getGeoArticleDraft: (articleId) => ipcRenderer.invoke('geo-agent:get-geo-article-draft', articleId),
