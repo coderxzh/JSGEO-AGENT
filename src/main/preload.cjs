@@ -193,7 +193,7 @@ contextBridge.exposeInMainWorld('geoAgent', {
   getLatestGeoQuestionSet: (geoProjectId, platform) => ipcRenderer.invoke('geo-agent:get-latest-geo-question-set', geoProjectId, platform),
   getGeoQuestionSet: (questionSetId) => ipcRenderer.invoke('geo-agent:get-geo-question-set', questionSetId),
   runGeoSourceDiscovery: (geoProjectId, platform, fallbackReport = null, messageId = null) => ipcRenderer.invoke('geo-agent:run-geo-source-discovery', geoProjectId, platform, fallbackReport, messageId),
-  runGeoSourceDiscoveryStream: (geoProjectId, platform, fallbackReport = null, messageId = null, conversationId = null, parentMessageId = null, onEvent) => invokeStream('geo-agent:run-geo-source-discovery-stream', { geoProjectId, platform, fallbackReport, messageId, conversationId, parentMessageId }, onEvent),
+  runGeoSourceDiscoveryStream: (geoProjectId, platform, fallbackReport = null, messageId = null, conversationId = null, parentMessageId = null, onEvent) => invokeStream('geo-agent:run-geo-source-discovery-stream', { geoProjectId, platform, fallbackReport, messageId, conversationId, parentMessageId }, onEvent, 480000),
   getLatestGeoSourceDiscovery: (geoProjectId, platform) => ipcRenderer.invoke('geo-agent:get-latest-geo-source-discovery', geoProjectId, platform),
   getGeoSourceDiscovery: (discoveryId) => ipcRenderer.invoke('geo-agent:get-geo-source-discovery', discoveryId),
   getSourceDiscoveries: (projectId, platform = null) => ipcRenderer.invoke('geo-agent:get-source-discoveries', { projectId, platform }),

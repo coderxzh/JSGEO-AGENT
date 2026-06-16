@@ -172,8 +172,11 @@ export function AutoLearning() {
       setReflectionProgress('阶段七已生成待确认学习规则。');
       await loadRules();
     } catch (reflectError) {
-      setReflectionProgress('阶段七自动学习失败，请稍后重试。');
+      setReflectionProgress('阶段七自动学习失败，可点击"立即复查"重新触发阶段六后再次尝试生成学习规则。');
       setError(reflectError instanceof Error ? reflectError.message : String(reflectError));
+      if (checkId === visibilityCheck?.id) {
+        autoReflectionRef.current = null;
+      }
     } finally {
       setIsReflecting(false);
     }
@@ -204,7 +207,7 @@ export function AutoLearning() {
         if (event.type === 'result' && event.visibility_check) setVisibilityCheck(event.visibility_check);
         if (event.type === 'error' && event.error) {
           setError(event.error);
-          setVisibilityProgress('阶段六检测失败');
+          setVisibilityProgress('阶段六检测失败，可点击"立即复查"重新执行。');
         }
       });
       const response = await visibilityPromise;
@@ -215,6 +218,7 @@ export function AutoLearning() {
       setVisibilityProgress('阶段六检测完成。');
     } catch (checkError) {
       setError(checkError instanceof Error ? checkError.message : String(checkError));
+      setVisibilityProgress('阶段六检测失败，可点击"立即复查"重新执行。');
     } finally {
       setIsCheckingVisibility(false);
     }

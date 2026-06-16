@@ -12,8 +12,10 @@ import {
   History,
   Info,
   Library,
+  Loader2,
   Mic,
   Plus,
+  RefreshCw,
   Search,
   Send,
   Sparkles,
@@ -182,6 +184,20 @@ type AgentTraceSummary = {
   }>;
 };
 
+type RetryableStage = {
+  phase: 2 | 3 | 4 | 6 | 7;
+  platform: 'doubao' | 'deepseek';
+  geoProjectId: string;
+  payload: {
+    report?: GeoAgentGeoReport;
+    discovery?: GeoAgentGeoSourceDiscovery;
+    visibilityCheckId?: string;
+  };
+  originalError: string;
+  attemptCount: number;
+  maxAttempts: number;
+};
+
 /**
  * ChatMessage 类型定义
  *
@@ -189,7 +205,7 @@ type AgentTraceSummary = {
  * - 基础字段：id, role, content, status, error
  * - 用户消息字段：attachmentIds, suggestions
  * - 助手消息字段：reasoning, reasoningContent, reasoningSteps, modelDebugLines, draftStreamSections, sources, searchQueries, searchActions, searchUsage, liveSearchSteps, provider, model, actionBusy
- * - GEO 流程字段：knowledgeDraft, phaseTwoPrompt, phaseTwoPlatform, phaseTwoExecution, geoReport, sourceDiscoveryExecution, sourceDiscovery, sourceDiscoveryAttempted, articleDraftExecution, articleDraft, supportArticles, supportArticlesPrompt, articleDraftAttempts, confirmationState, confirmationApproved, progressiveDraftGroups, geoProjectId
+ * - GEO 流程字段：knowledgeDraft, phaseTwoPrompt, phaseTwoPlatform, phaseTwoExecution, geoReport, sourceDiscoveryExecution, sourceDiscovery, sourceDiscoveryAttempted, articleDraftExecution, articleDraft, supportArticles, supportArticlesPrompt, articleDraftAttempts, confirmationState, confirmationApproved, progressiveDraftGroups, geoProjectId, retryableStage
  */
 type ChatMessage = {
   // 基础字段
@@ -279,6 +295,7 @@ type ChatMessage = {
   confirmationApproved?: boolean;
   progressiveDraftGroups?: number;
   geoProjectId?: string;
+  retryableStage?: RetryableStage | null;
 };
 
 type ConfigStatus = Awaited<ReturnType<NonNullable<Window['geoAgent']>['getConfigStatus']>>;
@@ -2355,13 +2372,24 @@ export function AgentStudio() {
       }
       window.dispatchEvent(new CustomEvent('geo-agent-geo-project-changed', { detail: { projectId: project.project_id, geoProjectId: project.id } }));
     } catch (error) {
-      setMessages((current) => updateMessage(current, messageId, {
-        content: normalizeChatError(error),
+      const errorMessage = normalizeChatError(error);
+      setMessages((current) => updateMessage(current, phaseTwoTargetId, {
+        content: errorMessage,
         phaseTwoExecution: undefined,
-        confirmationState: 'approval-requested',
+        confirmationState: 'output-available',
         confirmationApproved: undefined,
         actionBusy: false,
         status: 'error',
+        error: errorMessage,
+        retryableStage: {
+          phase: 2,
+          platform,
+          geoProjectId: project.id,
+          payload: {},
+          originalError: errorMessage,
+          attemptCount: 1,
+          maxAttempts: 3,
+        },
       }));
     } finally {
       stageInFlightRef.current.delete(lockKey);
@@ -2511,11 +2539,22 @@ export function AgentStudio() {
       }
     } catch (error) {
       const targetId = ensureStageMessage();
+      const errorMessage = normalizeChatError(error);
       setMessages((current) => updateMessage(current, targetId, {
-        content: `${normalizeChatError(error)}\n\n我已经尝试从当前阶段二结果回填问题池。若仍失败，说明当前消息里没有可用的排行榜问题池结构，需要重新执行阶段二问题池构建。`,
+        content: `${errorMessage}\n\n我已经尝试从当前阶段二结果回填问题池。若仍失败，说明当前消息里没有可用的排行榜问题池结构，需要重新执行阶段二问题池构建。`,
         sourceDiscoveryExecution: undefined,
         sourceDiscoveryAttempted: true,
         status: 'error',
+        error: errorMessage,
+        retryableStage: {
+          phase: 3,
+          platform,
+          geoProjectId: report.geo_project_id,
+          payload: { report },
+          originalError: errorMessage,
+          attemptCount: 1,
+          maxAttempts: 3,
+        },
       }));
     } finally {
       stageInFlightRef.current.delete(lockKey);
@@ -2665,17 +2704,88 @@ export function AgentStudio() {
       }));
       window.dispatchEvent(new CustomEvent('geo-agent-geo-project-changed', { detail: { projectId: discovery.enterprise_project_id, geoProjectId: discovery.geo_project_id } }));
     } catch (error) {
+      const errorMessage = normalizeChatError(error);
       setMessages((current) => updateMessage(current, stageMessageId, {
-        content: normalizeChatError(error),
+        content: errorMessage,
         articleDraftExecution: undefined,
         confirmationState: 'approval-requested',
         confirmationApproved: undefined,
         actionBusy: false,
         supportArticlesPrompt: discovery,
         status: 'error',
+        error: errorMessage,
+        retryableStage: {
+          phase: 4,
+          platform,
+          geoProjectId: discovery.geo_project_id,
+          payload: { discovery },
+          originalError: errorMessage,
+          attemptCount: 1,
+          maxAttempts: 3,
+        },
       }));
     } finally {
       stageInFlightRef.current.delete(lockKey);
+    }
+  };
+
+  const retryGeoStage = async (messageId: string, message: ChatMessage) => {
+    const retryable = message.retryableStage;
+    if (!retryable) return;
+    const { phase, platform, geoProjectId, payload, attemptCount } = retryable;
+    if (attemptCount >= retryable.maxAttempts) {
+      setMessages((current) => updateMessage(current, messageId, {
+        content: `${message.content || ''}\n\n已达到最大重试次数（${retryable.maxAttempts} 次），请检查网络或 API 配置后手动重新开始该阶段。`,
+        retryableStage: null,
+      }));
+      return;
+    }
+    const lockKey = stageRunKey(geoProjectId, platform, phase as 2 | 3 | 4);
+    if (stageInFlightRef.current.has(lockKey) || runningStageKeys.has(lockKey)) {
+      return;
+    }
+
+    setMessages((current) => updateMessage(current, messageId, {
+      status: 'streaming',
+      error: null,
+      retryableStage: { ...retryable, attemptCount: attemptCount + 1 },
+      ...(phase === 2 && {
+        phaseTwoExecution: { platform, companyName: message.phaseTwoExecution?.companyName || '企业', activeStep: 0 },
+      }),
+      ...(phase === 3 && {
+        sourceDiscoveryExecution: { platform, activeStep: 0 },
+      }),
+      ...(phase === 4 && {
+        articleDraftExecution: { platform, activeStep: 0 },
+      }),
+    }));
+
+    try {
+      if (phase === 2) {
+        let project: GeoAgentGeoProject | null = geoProject && geoProject.id === geoProjectId ? geoProject : null;
+        if (!project && window.geoAgent?.getGeoProject) {
+          project = await window.geoAgent.getGeoProject(geoProjectId);
+        }
+        if (!project) {
+          throw new Error('无法获取对应 GEO 项目，请刷新页面后重试。');
+        }
+        await confirmPhaseTwo(messageId, project, platform);
+      } else if (phase === 3 && payload.report) {
+        await runSourceDiscoveryFromReport(messageId, payload.report);
+      } else if (phase === 4 && payload.discovery) {
+        await runSupportArticlesFromDiscovery(messageId, payload.discovery);
+      }
+    } catch (error) {
+      const errorMessage = normalizeChatError(error);
+      setMessages((current) => updateMessage(current, messageId, {
+        status: 'error',
+        error: errorMessage,
+        retryableStage: {
+          ...retryable,
+          attemptCount: attemptCount + 1,
+          originalError: errorMessage,
+        },
+      }));
     }
   };
 
@@ -3066,6 +3176,7 @@ export function AgentStudio() {
               onRequestSupportArticles={requestSupportArticles}
               onRunArticleDraft={runArticleDraftFromDiscovery}
               onRunSourceDiscovery={runSourceDiscoveryFromReport}
+              onRetryGeoStage={retryGeoStage}
               runningStageKeys={runningStageKeys}
               workflowState={workflowState}
             />
@@ -3531,6 +3642,64 @@ const PendingActionCard: React.FC<{
   );
 };
 
+const RetryableStageBar: React.FC<{
+  retryable: RetryableStage;
+  onRetry: () => void;
+  busy: boolean;
+}> = ({ retryable, onRetry, busy }) => {
+  const phaseLabel: Record<number, string> = {
+    2: '阶段二：排行榜问题池',
+    3: '阶段三：高权重信源发现',
+    4: '阶段四：内容资产生成',
+    6: '阶段六：推荐可见性检测',
+    7: '阶段七：学习规则生成',
+  };
+  const isExhausted = retryable.attemptCount >= retryable.maxAttempts;
+  return (
+    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-900/50 dark:bg-amber-950/30">
+      <div className="flex items-center gap-2 text-[13px] text-amber-800 dark:text-amber-200">
+        <span className="font-semibold">{platformLabelFor(retryable.platform)} {phaseLabel[retryable.phase]}</span>
+        <span className="text-amber-600/70 dark:text-amber-300/70">
+          {isExhausted ? '已达到最大重试次数' : `执行失败（${retryable.attemptCount}/${retryable.maxAttempts} 次尝试）`}
+        </span>
+      </div>
+      <p className="mt-1 text-[12px] text-amber-700/80 dark:text-amber-200/70">{retryable.originalError}</p>
+      <div className="mt-2 flex items-center gap-2">
+        {!isExhausted && (
+          <button
+            className={cn(
+              'inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[12px] font-bold transition-colors',
+              busy
+                ? 'cursor-not-allowed bg-surface-container text-on-surface-variant'
+                : 'bg-secondary text-on-secondary hover:opacity-90'
+            )}
+            disabled={busy}
+            onClick={onRetry}
+            type="button"
+          >
+            {busy ? (
+              <>
+                <Loader2 className="size-3.5 animate-spin" />
+                执行中...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="size-3.5" />
+                重新执行
+              </>
+            )}
+          </button>
+        )}
+        <span className="text-[11px] text-amber-600/60 dark:text-amber-300/50">
+          {isExhausted
+            ? '请检查网络或 API 配置后手动重新开始该阶段。'
+            : '重新执行将生成新的阶段记录，之前已完成的阶段结果仍会保留。'}
+        </span>
+      </div>
+    </div>
+  );
+};
+
 const ChatBubble: React.FC<{
   message: ChatMessage;
   setInputValue: (value: string) => void;
@@ -3544,9 +3713,10 @@ const ChatBubble: React.FC<{
   onRequestSupportArticles: (messageId: string, discovery: GeoAgentGeoSourceDiscovery) => void;
   onRunArticleDraft: (messageId: string, discovery: GeoAgentGeoSourceDiscovery, articleType: 'consulting' | 'review') => void;
   onRunSourceDiscovery: (messageId: string, report: GeoAgentGeoReport) => void;
+  onRetryGeoStage: (messageId: string, message: ChatMessage) => void;
   runningStageKeys: Set<string>;
   workflowState: GeoAgentWorkflowState | null;
-}> = ({ message, setInputValue, onSuggestionSelect, onContinueKnowledgeDraft, onConfirmDraft, onConfirmKnowledgeUpdate, onCancelKnowledgeUpdate, onConfirmPhaseTwo, onConfirmSupportArticles, onRequestSupportArticles, onRunArticleDraft, onRunSourceDiscovery, runningStageKeys, workflowState }) => {
+}> = ({ message, setInputValue, onSuggestionSelect, onContinueKnowledgeDraft, onConfirmDraft, onConfirmKnowledgeUpdate, onCancelKnowledgeUpdate, onConfirmPhaseTwo, onConfirmSupportArticles, onRequestSupportArticles, onRunArticleDraft, onRunSourceDiscovery, onRetryGeoStage, runningStageKeys, workflowState }) => {
   const nextAction = getNextWorkflowAction(workflowState, message, runningStageKeys);
   if (message.role === 'user') {
     // 检查消息是否包含附件信息
@@ -3747,6 +3917,13 @@ const ChatBubble: React.FC<{
         )}
         {message.status === 'cancelled' && (
           <div className="mt-2 text-[12px] text-on-surface-variant/70">已停止生成</div>
+        )}
+        {message.status === 'error' && message.retryableStage && (
+          <RetryableStageBar
+            retryable={message.retryableStage}
+            onRetry={() => onRetryGeoStage(message.id, message)}
+            busy={message.actionBusy || (message.retryableStage.phase <= 4 && runningStageKeys.has(stageRunKey(message.retryableStage.geoProjectId, message.retryableStage.platform, message.retryableStage.phase as 2 | 3 | 4)))}
+          />
         )}
         {message.suggestions && message.suggestions.length > 0 && message.status === 'complete' && (
           <Suggestions className="mt-4">
