@@ -23,25 +23,18 @@ function setState(key, value) {
  */
 function getNewArticles(lastProcessedAt) {
   const db = getDb();
-  if (!lastProcessedAt) {
-    return db.prepare(`
-      SELECT ad.*, ap.name as project_name
-      FROM geo_article_drafts ad
-      INNER JOIN geo_projects ap ON ap.id = ad.project_id
-      WHERE ad.publication_evidence IS NOT NULL
-      AND json_extract(ad.publication_evidence, '$.status') = 'published'
-      AND json_extract(ad.publication_evidence, '$.published_url') IS NOT NULL
-    `).all();
-  }
-  return db.prepare(`
-    SELECT ad.*, ap.name as project_name
+  const baseSql = `
+    SELECT ad.*, p.name as project_name
     FROM geo_article_drafts ad
-    INNER JOIN geo_projects ap ON ap.id = ad.project_id
-    WHERE ad.publication_evidence IS NOT NULL
-    AND json_extract(ad.publication_evidence, '$.status') = 'published'
-    AND json_extract(ad.publication_evidence, '$.published_url') IS NOT NULL
-    AND ad.created_at > ?
-  `).all(lastProcessedAt);
+    INNER JOIN projects p ON p.id = ad.project_id
+    INNER JOIN publish_orders po ON po.article_id = ad.id
+    WHERE po.published_url IS NOT NULL
+      AND po.published_url != ''
+  `;
+  if (!lastProcessedAt) {
+    return db.prepare(`${baseSql}`).all();
+  }
+  return db.prepare(`${baseSql} AND ad.created_at > ?`).all(lastProcessedAt);
 }
 
 /**
@@ -117,7 +110,12 @@ async function processNewArticles(extractPatternsFn, mergePatternsFn) {
     }
   }
 
-  setState('last_processed_at', new Date().toISOString());
+  const maxCreatedAt = articles.reduce((max, article) => {
+    if (!article.created_at) return max;
+    return !max || article.created_at > max ? article.created_at : max;
+  }, null);
+  setState('last_processed_at', maxCreatedAt || new Date().toISOString());
+
   console.log(`[GlobalRuleService] 处理完成: ${articles.length} 篇文章, ${rulesCreated} 条新规则`);
   return { processed: articles.length, rulesCreated };
 }
@@ -131,13 +129,13 @@ function decayStaleRules() {
     SELECT * FROM evolution_rules
     WHERE scope = 'global' AND status = 'confirmed'
     AND rule_type IN ('title', 'structure')
-    AND updated_at < datetime('now', '-3 days')
+    AND datetime(updated_at) < datetime('now', '-3 days')
   `).all();
 
   for (const rule of staleRules) {
     const newConfidence = Math.max(0.1, rule.confidence - 0.1);
     if (newConfidence <= 0.1) {
-      db.prepare("UPDATE evolution_rules SET status = 'archived' WHERE id = ?").run(rule.id);
+      db.prepare("UPDATE evolution_rules SET status = 'archived', updated_at = datetime('now') WHERE id = ?").run(rule.id);
     } else {
       updateRuleConfidence(rule.id, rule.evidence_count, newConfidence);
     }

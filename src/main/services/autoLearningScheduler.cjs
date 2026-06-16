@@ -54,14 +54,13 @@ async function runCycle() {
   if (isRunning || !databaseRef) return null;
   isRunning = true;
   try {
-    // 查询所有有已发布文章的项目
+    // 查询所有有已发布 URL 的项目
     const projects = databaseRef.prepare(`
       SELECT DISTINCT p.id, p.name
       FROM projects p
-      INNER JOIN article_drafts ad ON ad.project_id = p.id
-      WHERE ad.publication_evidence IS NOT NULL
-        AND json_extract(ad.publication_evidence, '$.status') = 'published'
-        AND json_extract(ad.publication_evidence, '$.published_url') IS NOT NULL
+      INNER JOIN publish_orders po ON po.project_id = p.id
+      WHERE po.published_url IS NOT NULL
+        AND po.published_url != ''
     `).all();
 
     let projectsChecked = 0;
@@ -69,8 +68,8 @@ async function runCycle() {
     let rulesGenerated = 0;
 
     // 延迟加载服务（避免循环依赖）
-    const visibilityCheckService = require('./visibilityCheckService');
-    const reflectionService = require('./reflectionService');
+    const autoLearningVisibilityService = require('./autoLearningVisibilityService.cjs');
+    const reflectionService = require('./reflectionService.cjs');
     const globalRuleService = require('./globalRuleService.cjs');
 
     for (const project of projects) {
@@ -85,69 +84,32 @@ async function runCycle() {
         projectsChecked++;
         const projectId = project.id;
 
-        // 获取企业档案
-        const enterprise = databaseRef.prepare('SELECT * FROM enterprises WHERE id = ?').get(projectId);
-        if (!enterprise) continue;
-
-        // 获取已确认的问题
-        const questions = databaseRef.prepare(
-          "SELECT * FROM question_pool WHERE project_id = ? AND status = 'confirmed'"
-        ).all(projectId);
-        if (questions.length === 0) continue;
-
-        // 获取已发布的文章 URL
-        const drafts = databaseRef.prepare(
-          "SELECT * FROM article_drafts WHERE project_id = ? AND publication_evidence IS NOT NULL"
-        ).all(projectId);
-        const publishedUrls = drafts
-          .map((d) => {
-            try { return JSON.parse(d.publication_evidence)?.published_url; }
-            catch { return null; }
-          })
-          .filter(Boolean);
-        if (publishedUrls.length === 0) continue;
-
-        // 执行 Phase 6 可见性检测
-        const profile = typeof enterprise.profile === 'string'
-          ? JSON.parse(enterprise.profile)
-          : enterprise.profile;
-        const checkResult = await visibilityCheckService.runVisibilityCheck({
-          projectId,
-          platform: 'doubao',
-          profile,
-          questions: questions.map((q) => ({ id: q.id, text: q.question_text })),
-          publishedUrls,
-        });
+        // 执行 Phase 6 可见性检测（豆包助手联网）
+        const checkResult = await autoLearningVisibilityService.runAutoLearningVisibility(
+          `geo-${projectId}`,
+          'doubao',
+        );
 
         if (!checkResult) continue;
 
-        // 分析是否被收录
+        // 分析是否被收录：必须检测到已发布 URL 被引用
         const questionResults = checkResult.result?.question_results ?? [];
         const matchedUrls = questionResults.flatMap((r) => r.matched_published_urls || []);
-        if (matchedUrls.length > 0) {
-          visibilityDetected++;
+        if (matchedUrls.length === 0) {
+          console.log(`[AutoLearningScheduler] 项目 ${project.id} 未检测到已发布 URL 被引用，跳过反思。`);
+          continue;
+        }
+        visibilityDetected++;
 
-          // 获取上一次检测结果用于对比
-          const previousCheck = databaseRef.prepare(
-            "SELECT * FROM ai_visibility_checks WHERE project_id = ? AND id != ? ORDER BY created_at DESC LIMIT 1"
-          ).get(projectId, checkResult.id);
+        // 执行 Phase 7 反思学习
+        const reflectionResult = await reflectionService.generateReflection(
+          `geo-${projectId}`,
+          'doubao',
+          checkResult.id,
+        );
 
-          // 执行 Phase 7 反思学习
-          const reflectionResult = await reflectionService.generateReflection({
-            projectId,
-            platform: 'doubao',
-            visibilityCheckId: checkResult.id,
-            profile,
-            publishedArticles: drafts.map((d) => ({
-              id: d.id,
-              title: d.title,
-              url: (() => { try { return JSON.parse(d.publication_evidence)?.published_url; } catch { return null; } })(),
-            })).filter((a) => a.url),
-          });
-
-          if (reflectionResult?.rules?.length > 0) {
-            rulesGenerated += reflectionResult.rules.length;
-          }
+        if (reflectionResult?.rules?.length > 0) {
+          rulesGenerated += reflectionResult.rules.length;
         }
       } catch (projectError) {
         console.error(`[AutoLearningScheduler] 项目 ${project.id} 执行失败:`, projectError.message);

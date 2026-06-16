@@ -1,11 +1,21 @@
+'use strict';
+
 const crypto = require('node:crypto');
 const { getDb } = require('./databaseService.cjs');
 const questionPoolService = require('./questionPoolService.cjs');
 const knowledgeService = require('./knowledgeService.cjs');
 const articlePublishService = require('./articlePublishService.cjs');
-const { streamLLM } = require('./llmGateway.cjs');
+const { responsesStream } = require('./llmGateway.cjs');
 const { getTaskPolicy } = require('./modelPolicyService.cjs');
 const { fieldText } = require('./profileFieldService.cjs');
+const {
+  extractUrlEvidenceFromRaw,
+  extractSearchQueries,
+  answerExcerpt,
+} = require('./urlEvidenceUtils.cjs');
+
+const DEFAULT_PLATFORM = 'doubao';
+const EVIDENCE_MODE = 'doubao_assistant_search';
 
 function nowIso() {
   return new Date().toISOString();
@@ -30,11 +40,6 @@ function text(value) {
 
 function projectIdFromGeoId(value) {
   return String(value || '').replace(/^geo-/, '');
-}
-
-function extractUrls(value) {
-  const matches = String(value || '').match(/https?:\/\/[^\s)"'<>，。；、]+/gi) || [];
-  return Array.from(new Set(matches.map((url) => url.replace(/[)\].,;，。；、]+$/, ''))));
 }
 
 function rowToCheck(row) {
@@ -71,17 +76,18 @@ function getConfirmedQuestions(projectId, platform) {
   return normalized;
 }
 
-function getPublishedUrls(projectId, platform = 'doubao') {
-  const { drafts } = articlePublishService.listArticleDrafts(projectId, { platform });
+function getPublishedUrls(projectId) {
+  const { drafts } = articlePublishService.listArticleDrafts(projectId);
   return drafts
     .map((draft) => {
-      const evidence = draft.draft.publication_evidence || {};
+      const evidence = draft?.draft?.publication_evidence || {};
       const orderUrl = draft?.publish_order?.published_url;
+      const url = text(orderUrl || evidence.published_url);
       return {
         article_id: draft.id,
-        title: draft.draft.title || '',
-        article_role: draft.draft.article_role || '',
-        url: text(orderUrl || evidence.published_url),
+        title: draft?.draft?.title || '',
+        article_role: draft?.draft?.article_role || '',
+        url,
         platform: text(evidence.published_platform || draft?.publish_order?.provider),
       };
     })
@@ -95,8 +101,8 @@ function buildMessages({ profile, question, publishedUrls }) {
     {
       role: 'system',
       content: [
-        '你是 GEO 推荐可见性检测助手。',
-        '你必须使用模型联网搜索回答用户问题，并观察目标企业是否被推荐、提及或引用。',
+        '你是 GEO 自动学习可见性检测助手。',
+        '请使用豆包助手联网搜索回答用户真实问题，并观察目标企业的已发布内容是否被引用或收录。',
         '不要为了照顾目标企业而改写答案；按真实联网搜索结果判断。',
       ].join('\n'),
     },
@@ -110,8 +116,8 @@ function buildMessages({ profile, question, publishedUrls }) {
         `行业：${fieldText(profile, 'industry_category') || '未知'}`,
         `业务区域：${fieldText(profile, 'business_regions') || fieldText(profile, 'detailed_address') || '未知'}`,
         '',
-        '请联网搜索并直接回答这个用户问题。',
-        '回答后补充一段检测信息：目标企业是否出现、是否进入推荐名单、如有排名或推荐顺序请指出、出现了哪些竞品、回答中引用了哪些 URL。',
+        '请联网搜索并直接回答这个问题。',
+        '回答后请在末尾列出“参考来源”，包含标题和 URL。',
         publishedUrls.length
           ? `本轮已发布内容 URL：\n${publishedUrls.map((item) => `- ${item.url}`).join('\n')}`
           : '本轮暂无已发布内容 URL。',
@@ -120,43 +126,58 @@ function buildMessages({ profile, question, publishedUrls }) {
   ];
 }
 
-function analyzeAnswer({ answer, profile, publishedUrls }) {
+function analyzeAnswer({ answer, raw, rawEvents, profile, publishedUrls }) {
   const companyName = fieldText(profile, 'company_name');
   const shortName = fieldText(profile, 'short_name');
   const aliases = [companyName, shortName].map(text).filter(Boolean);
   const body = String(answer || '');
   const mentioned = aliases.some((alias) => body.includes(alias));
-  const urls = extractUrls(body);
+
+  const citedUrls = extractUrlEvidenceFromRaw([raw, rawEvents, body], {});
+  const citedUrlStrings = Array.from(new Set(citedUrls.map((item) => item.url).filter(Boolean)));
+
   const matchedPublishedUrls = publishedUrls
-    .filter((item) => urls.includes(item.url) || body.includes(item.url))
+    .filter((item) => citedUrlStrings.includes(item.url) || body.includes(item.url))
     .map((item) => item.url);
-  const effectiveMention = mentioned || matchedPublishedUrls.length > 0;
-  const matchedAlias = aliases.find((alias) => body.includes(alias));
-  const rankingPosition = matchedAlias
-    ? Math.max(1, Math.min(10, Math.floor(body.indexOf(matchedAlias) / Math.max(body.length / 8, 1)) + 1))
-    : null;
+
+  const uniqueMatched = Array.from(new Set(matchedPublishedUrls));
+  const effectiveMention = mentioned || uniqueMatched.length > 0;
+
   const competitorCandidates = Array.from(new Set(
-    (body.match(/[\u4e00-\u9fa5A-Za-z0-9（）()路]{2,24}(?:公司|门店|机构|品牌|供应商|厂家|平台)/g) || [])
+    (body.match(/[一-龥A-Za-z0-9（）()路]{2,24}(?:公司|门店|机构|品牌|供应商|厂家|平台)/g) || [])
       .filter((item) => !aliases.some((alias) => item.includes(alias)))
       .slice(0, 8)
   ));
+
   return {
     target_mentioned: mentioned,
     effective_mention: effectiveMention,
-    ranking_position: rankingPosition,
-    cited_urls: urls,
-    matched_published_urls: matchedPublishedUrls,
+    cited_urls: citedUrlStrings,
+    matched_published_urls: uniqueMatched,
     competitors: competitorCandidates,
   };
 }
 
-async function runVisibilityCheck(geoProjectId, platform = 'doubao', onEvent = null) {
+async function runDoubaoAssistantSearch({ messages, onEvent }) {
+  const policy = getTaskPolicy('auto_learning_visibility');
+  return responsesStream({
+    messages,
+    provider: policy.provider,
+    model: policy.model,
+    networkMode: policy.network_mode,
+    deepThinking: policy.deep_thinking,
+    taskType: policy.task_type,
+    onEvent,
+  });
+}
+
+async function runAutoLearningVisibility(geoProjectId, platform = DEFAULT_PLATFORM, onEvent = null) {
   const projectId = projectIdFromGeoId(geoProjectId);
   if (!projectId) throw new Error('geoProjectId is required.');
+
   const profile = knowledgeService.getKnowledgeProfile(projectId).profile || {};
   const questions = getConfirmedQuestions(projectId, platform);
-  const publishedUrls = getPublishedUrls(projectId, platform);
-  const policy = getTaskPolicy('visibility_check', { platform });
+  const publishedUrls = getPublishedUrls(projectId);
   const questionResults = [];
 
   for (let index = 0; index < questions.length; index += 1) {
@@ -168,41 +189,46 @@ async function runVisibilityCheck(geoProjectId, platform = 'doubao', onEvent = n
       question_id: question.id,
       message: `正在检测：${question.question}`,
     });
-    const response = await streamLLM({
+
+    const response = await runDoubaoAssistantSearch({
       messages: buildMessages({ profile, question, publishedUrls }),
-      temperature: 0.1,
-      maxTokens: 5000,
-      provider: policy.provider,
-      model: policy.model,
-      networkMode: policy.network_mode,
-      deepThinking: policy.deep_thinking,
-      apiFamily: policy.api_family,
-      taskType: 'visibility_check',
       onEvent: (event) => {
         if (event.type === 'reasoning_delta') onEvent?.(event);
       },
     });
-    const analysis = analyzeAnswer({ answer: response.content, profile, publishedUrls });
+
+    const analysis = analyzeAnswer({
+      answer: response.content,
+      raw: response.raw,
+      rawEvents: response.raw_events,
+      profile,
+      publishedUrls,
+    });
+
     const item = {
       question_id: question.id,
       question: question.question,
       answer: response.content,
+      search_queries: extractSearchQueries(response.raw_events, question.question),
       ...analysis,
     };
     questionResults.push(item);
     onEvent?.({ type: 'question_result', result: item });
   }
 
+  const matchedCount = questionResults.filter((item) => item.matched_published_urls.length > 0).length;
   const effectiveCount = questionResults.filter((item) => item.effective_mention).length;
+
   const result = {
-    evidence_mode: 'web_search_plugin',
-    source_result_origin: 'model_web_search',
+    evidence_mode: EVIDENCE_MODE,
+    source_result_origin: 'doubao_assistant',
     target_company: fieldText(profile, 'company_name') || fieldText(profile, 'short_name'),
     checked_questions: questions,
     published_urls: publishedUrls,
     question_results: questionResults,
     visibility_rate: effectiveCount / questions.length,
     effective_mentions: effectiveCount,
+    matched_published_url_questions: matchedCount,
     total_questions: questions.length,
     missing_evidence: questionResults
       .filter((item) => !item.cited_urls.length)
@@ -226,13 +252,17 @@ async function runVisibilityCheck(geoProjectId, platform = 'doubao', onEvent = n
     updated_at: timestamp,
   });
 
-  const saved = getVisibilityCheck(id);
+  const saved = rowToCheck(getDb().prepare('SELECT * FROM ai_visibility_checks WHERE id = ?').get(id));
   onEvent?.({ type: 'result', visibility_check: saved });
   return saved;
 }
 
-async function runVisibilityCheckStream(payload = {}, onEvent = null) {
-  return runVisibilityCheck(payload.geoProjectId || payload.geo_project_id, payload.platform || 'doubao', onEvent);
+async function runAutoLearningVisibilityStream(payload = {}, onEvent = null) {
+  return runAutoLearningVisibility(
+    payload.geoProjectId || payload.geo_project_id,
+    payload.platform || DEFAULT_PLATFORM,
+    onEvent,
+  );
 }
 
 function getVisibilityCheck(checkId) {
@@ -242,7 +272,7 @@ function getVisibilityCheck(checkId) {
   return rowToCheck(row);
 }
 
-function getLatestVisibilityCheck(geoProjectId, platform = 'doubao') {
+function getLatestVisibilityCheck(geoProjectId, platform = DEFAULT_PLATFORM) {
   const projectId = projectIdFromGeoId(geoProjectId);
   if (!projectId) throw new Error('geoProjectId is required.');
   const row = getDb().prepare(`
@@ -255,8 +285,8 @@ function getLatestVisibilityCheck(geoProjectId, platform = 'doubao') {
 }
 
 module.exports = {
-  runVisibilityCheck,
-  runVisibilityCheckStream,
+  runAutoLearningVisibility,
+  runAutoLearningVisibilityStream,
   getVisibilityCheck,
   getLatestVisibilityCheck,
 };

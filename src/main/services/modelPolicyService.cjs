@@ -49,6 +49,18 @@ function getTaskPolicy(taskType, context = {}) {
     };
   }
 
+  if (task === 'auto_learning_visibility') {
+    return {
+      task_type: task,
+      provider: 'ark',
+      model: arkModel(process.env.DOUBAO_ASSISTANT_MODEL, process.env.DOUBAO_RESPONSES_MODEL, process.env.DOUBAO_MODEL, process.env.ARK_MODEL),
+      api_family: API_FAMILIES.DOUBAO_ASSISTANT,
+      network_mode: NETWORK_MODES.DOUBAO_ASSISTANT_SEARCH,
+      deep_thinking: true,
+      stream: true,
+    };
+  }
+
   if (task === 'visibility_check') {
     return {
       task_type: task,

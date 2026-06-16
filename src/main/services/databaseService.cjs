@@ -60,6 +60,7 @@ function createSchema(database) {
       name TEXT NOT NULL,
       description TEXT,
       status TEXT NOT NULL DEFAULT 'active',
+      reflection_enabled INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -370,19 +371,24 @@ function createSchema(database) {
 
     CREATE TABLE IF NOT EXISTS evolution_rules (
       id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
       platform TEXT,
       rule_type TEXT NOT NULL,
       content TEXT NOT NULL,
       evidence_count INTEGER NOT NULL DEFAULT 0,
       confidence REAL NOT NULL DEFAULT 0,
       status TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'enterprise',
+      target_stages TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_evolution_rules_project_status
       ON evolution_rules(project_id, status, created_at);
+
+    CREATE INDEX IF NOT EXISTS idx_evolution_rules_scope_stages
+      ON evolution_rules(scope, status, target_stages);
 
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
@@ -709,8 +715,36 @@ function migrateSchema(database) {
     );
   `);
 
-  // 规则系统扩展：evolution_rules 新增 scope 和 target_stages 字段
-  const erColumns = database.prepare('PRAGMA table_info(evolution_rules)').all();
+  // 规则系统扩展：evolution_rules 新增 scope 和 target_stages 字段，并允许 project_id 为 NULL（全局规则）
+  let erColumns = database.prepare('PRAGMA table_info(evolution_rules)').all();
+  const erProjectId = erColumns.find((c) => c.name === 'project_id');
+  if (erProjectId && erProjectId.notnull === 1) {
+    // SQLite 不支持 ALTER COLUMN，需要重建表以移除 project_id 的 NOT NULL 约束
+    database.exec(`
+      CREATE TABLE evolution_rules_new (
+        id TEXT PRIMARY KEY,
+        project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+        platform TEXT,
+        rule_type TEXT NOT NULL,
+        content TEXT NOT NULL,
+        evidence_count INTEGER NOT NULL DEFAULT 0,
+        confidence REAL NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'enterprise',
+        target_stages TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO evolution_rules_new SELECT * FROM evolution_rules;
+      DROP TABLE evolution_rules;
+      ALTER TABLE evolution_rules_new RENAME TO evolution_rules;
+      CREATE INDEX IF NOT EXISTS idx_evolution_rules_project_status
+        ON evolution_rules(project_id, status, created_at);
+      CREATE INDEX IF NOT EXISTS idx_evolution_rules_scope_stages
+        ON evolution_rules(scope, status, target_stages);
+    `);
+    erColumns = database.prepare('PRAGMA table_info(evolution_rules)').all();
+  }
   const erExisting = new Set(erColumns.map((c) => c.name));
   if (!erExisting.has('scope')) {
     database.exec("ALTER TABLE evolution_rules ADD COLUMN scope TEXT NOT NULL DEFAULT 'enterprise'");
