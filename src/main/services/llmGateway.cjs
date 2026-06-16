@@ -590,6 +590,7 @@ async function responsesStream({
   onEvent = null,
   signal = null,
   onRetry = null,
+  apiFamily = null,
 } = {}) {
   const config = getProviderConfig(provider, model);
   if (!config.apiKey) throw new Error('未配置 Responses API Key。');
@@ -621,7 +622,7 @@ async function responsesStream({
     task_type: taskType,
     provider: config.provider,
     model: config.model,
-    api_family: 'responses',
+    api_family: apiFamily || 'responses',
     request_id: requestId,
     network_mode: resolvedNetworkMode,
     message: '正在调用 Responses 模型',
@@ -644,7 +645,7 @@ async function responsesStream({
     task_type: taskType,
     provider: config.provider,
     model: config.model,
-    api_family: 'responses',
+    api_family: apiFamily || 'responses',
     request_id: requestId,
     network_mode: resolvedNetworkMode,
     http_status: response.status,
@@ -694,7 +695,7 @@ async function responsesStream({
           task_type: taskType,
           provider: config.provider,
           model: config.model,
-          api_family: 'responses',
+          api_family: apiFamily || 'responses',
           request_id: requestId,
           text: delta,
           event_type: event.type || event.event,
@@ -707,7 +708,7 @@ async function responsesStream({
           task_type: taskType,
           provider: config.provider,
           model: config.model,
-          api_family: 'responses',
+          api_family: apiFamily || 'responses',
           request_id: requestId,
           text: delta,
           event_type: event.type || event.event,
@@ -723,7 +724,7 @@ async function responsesStream({
     task_type: taskType,
     provider: config.provider,
     model: config.model,
-    api_family: 'responses',
+    api_family: apiFamily || 'responses',
     request_id: requestId,
     network_mode: resolvedNetworkMode,
     latency_ms: Date.now() - startedAt,
@@ -808,6 +809,7 @@ async function streamLLM({
     onEvent,
     signal,
     onRetry,
+    apiFamily: resolvedApiFamily,
   });
 }
 

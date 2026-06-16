@@ -194,6 +194,22 @@ function getTaskPolicy(taskType, context = {}) {
     };
   }
 
+  if (task === 'global_rule_extraction') {
+    return {
+      task_type: task,
+      provider: process.env.GLOBAL_RULE_EXTRACTION_PROVIDER || 'ark',
+      model: arkModel(
+        process.env.GLOBAL_RULE_EXTRACTION_MODEL,
+        process.env.GEO_GENERATION_MODEL,
+        process.env.ARK_MODEL
+      ),
+      api_family: API_FAMILIES.CHAT_COMPLETIONS,
+      network_mode: NETWORK_MODES.NONE,
+      deep_thinking: false,
+      stream: false,
+    };
+  }
+
   return {
     task_type: 'rag_chat',
     provider: process.env.GEO_GENERATION_PROVIDER || 'ark',

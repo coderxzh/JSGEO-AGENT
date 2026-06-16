@@ -58,7 +58,7 @@ function getLatestQuestionSet(projectId, platform) {
         SELECT *
         FROM geo_question_sets
         WHERE project_id = ? AND platform = ?
-        ORDER BY datetime(created_at) DESC
+        ORDER BY created_at DESC
         LIMIT 1
       `).get(projectId, platform)
     : null;
@@ -67,7 +67,7 @@ function getLatestQuestionSet(projectId, platform) {
     SELECT *
     FROM geo_question_sets
     WHERE project_id = ? AND platform = 'doubao'
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
     LIMIT 1
   `).get(projectId);
 }
@@ -711,7 +711,7 @@ function getLatestSourceDiscovery(geoProjectId, platform = DEFAULT_PLATFORM) {
     SELECT *
     FROM geo_source_discoveries
     WHERE project_id = ? AND platform = ?
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
     LIMIT 1
   `).get(projectId, platform);
   if (requested) return rowToDiscovery(requested);
@@ -720,7 +720,7 @@ function getLatestSourceDiscovery(geoProjectId, platform = DEFAULT_PLATFORM) {
     SELECT *
     FROM geo_source_discoveries
     WHERE project_id = ? AND json_extract(discovery_json, '$.source_result_origin') = ?
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
     LIMIT 1
   `).get(projectId, SOURCE_ORIGIN);
   if (fallback) return rowToDiscovery(fallback, platform);
@@ -734,12 +734,12 @@ function listSourceDiscoveries(projectId, platform = null) {
     ? getDb().prepare(`
         SELECT * FROM geo_source_discoveries
         WHERE project_id = ? AND platform = ?
-        ORDER BY datetime(created_at) DESC
+        ORDER BY created_at DESC
       `).all(projectId, platform)
     : getDb().prepare(`
         SELECT * FROM geo_source_discoveries
         WHERE project_id = ?
-        ORDER BY datetime(created_at) DESC
+        ORDER BY created_at DESC
       `).all(projectId);
   return { discoveries: rows.map(rowToDiscovery) };
 }

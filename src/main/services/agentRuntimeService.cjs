@@ -153,7 +153,7 @@ function latestArticleDraft(projectId) {
     SELECT id
     FROM geo_article_drafts
     WHERE project_id = ?
-    ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
+    ORDER BY updated_at DESC, created_at DESC
     LIMIT 1
   `).get(projectId);
   return row?.id ? articleDraftService.getArticleDraft(row.id) : null;

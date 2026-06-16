@@ -281,7 +281,7 @@ function existingDraftSummaries(projectId, platform) {
     SELECT article_type, draft_json
     FROM geo_article_drafts
     WHERE project_id = ? AND platform = ?
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
     LIMIT 40
   `).all(projectId, platform).map((row) => {
     const draft = jsonParse(row.draft_json, {});
@@ -761,13 +761,13 @@ function getLatestArticleDraft(geoProjectId, platform = 'doubao', articleType = 
     ? getDb().prepare(`
         SELECT * FROM geo_article_drafts
         WHERE project_id = ? AND platform = ? AND article_type = ?
-        ORDER BY datetime(created_at) DESC
+        ORDER BY created_at DESC
         LIMIT 1
       `).get(projectId, platform, articleType)
     : getDb().prepare(`
         SELECT * FROM geo_article_drafts
         WHERE project_id = ? AND platform = ?
-        ORDER BY datetime(created_at) DESC
+        ORDER BY created_at DESC
         LIMIT 1
       `).get(projectId, platform);
   return row ? rowToDraft(row) : null;

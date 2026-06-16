@@ -305,12 +305,12 @@ function createShellWorkflowState(geoProjectId) {
       questionSet = db.prepare(`
         SELECT id, status FROM geo_question_sets
         WHERE project_id = ? AND platform = ?
-        ORDER BY datetime(created_at) DESC LIMIT 1
+        ORDER BY created_at DESC LIMIT 1
       `).get(projectId, platform);
       discovery = db.prepare(`
         SELECT id, status FROM geo_source_discoveries
         WHERE project_id = ? AND platform = ?
-        ORDER BY datetime(created_at) DESC LIMIT 1
+        ORDER BY created_at DESC LIMIT 1
       `).get(projectId, platform);
       const articleRows = db.prepare(`
         SELECT status, draft_json FROM geo_article_drafts
@@ -327,7 +327,7 @@ function createShellWorkflowState(geoProjectId) {
       visibilityCheck = db.prepare(`
         SELECT id, status FROM ai_visibility_checks
         WHERE project_id = ? AND platform = ?
-        ORDER BY datetime(created_at) DESC LIMIT 1
+        ORDER BY created_at DESC LIMIT 1
       `).get(projectId, platform);
       pendingRules = db.prepare(`
         SELECT COUNT(*) AS count FROM evolution_rules
@@ -632,6 +632,8 @@ function registerHandlers() {
     const abortController = new AbortController();
     activeStreams.set(requestId, { abortController, channel, sender: event.sender });
     const isCreateIntent = (payload.intent || 'create') === 'create';
+    // KnowledgeBase 详情页发起的 update 不会传入 conversation_id，不应在 AgentStudio 聊天列表中写入消息
+    const skipConversationMessage = !isCreateIntent && !payload.conversation_id;
     const canReuseDraftConversation = isCreateIntent
       && payload.conversation_id
       && conversationService.canReuseDraftConversationForCreate(payload.conversation_id);
@@ -645,59 +647,62 @@ function registerHandlers() {
     let processingDraft = null;
     let processingMessage = null;
     try {
-      try {
-        if (true) {
-        // 尝试复用最近的 geo_workflow 会话；没有则创建新的会话。
-        let effectiveConversationId = payload.conversation_id || null;
-        if (!effectiveConversationId && projectId && !isCreateIntent) {
-          const latest = conversationService.findLatestConversation(projectId, 'geo_workflow');
-          if (latest) {
-            effectiveConversationId = latest.id;
+      {
+        if (!skipConversationMessage) {
+          // 尝试复用最近的 geo_workflow 会话；没有则创建新的会话。
+          let effectiveConversationId = payload.conversation_id || null;
+          if (!effectiveConversationId && projectId && !isCreateIntent) {
+            const latest = conversationService.findLatestConversation(projectId, 'geo_workflow');
+            if (latest) {
+              effectiveConversationId = latest.id;
+            }
           }
-        }
-        if (effectiveConversationId && projectId) {
-          const row = getDb()
-            .prepare('SELECT project_id FROM conversations WHERE id = ?')
-            .get(effectiveConversationId);
-          if (row && row.project_id !== projectId) {
-            effectiveConversationId = null;
+          if (effectiveConversationId && projectId) {
+            const row = getDb()
+              .prepare('SELECT project_id FROM conversations WHERE id = ?')
+              .get(effectiveConversationId);
+            if (row && row.project_id !== projectId) {
+              effectiveConversationId = null;
+            }
           }
+          conversation = conversationService.ensureConversation({
+            projectId,
+            conversationId: effectiveConversationId,
+            firstMessage: payload.message || '创建企业知识库',
+            kind: 'geo_workflow',
+          });
+          payload.conversation_id = conversation.id;
+          conversationService.addMessage({
+            conversationId: conversation.id,
+            projectId,
+            role: 'user',
+            content: payload.message || `已上传 ${(payload.assets || []).length} 个附件创建企业知识库`,
+            metadata: {
+              type: 'knowledge_draft_request',
+              asset_count: Array.isArray(payload.assets) ? payload.assets.length : 0,
+            },
+          });
         }
-        conversation = conversationService.ensureConversation({
-          projectId,
-          conversationId: effectiveConversationId,
-          firstMessage: payload.message || '创建企业知识库',
-          kind: 'geo_workflow',
-        });
-        payload.conversation_id = conversation.id;
-        conversationService.addMessage({
-          conversationId: conversation.id,
-          projectId,
-          role: 'user',
-          content: payload.message || `已上传 ${(payload.assets || []).length} 个附件创建企业知识库`,
-          metadata: {
-            type: 'knowledge_draft_request',
-            asset_count: Array.isArray(payload.assets) ? payload.assets.length : 0,
-          },
-        });
         processingDraft = knowledgeService.createProcessingDraft(payload);
         payload.processing_draft_id = processingDraft.id;
-        processingMessage = conversationService.addMessage({
-          conversationId: conversation.id,
-          projectId,
-          role: 'assistant',
-          content: '正在生成企业知识库草稿。若软件关闭或流程中断，可稍后在对话历史中恢复该任务。',
-          metadata: {
-            type: 'knowledge_draft_task',
-            draft: processingDraft,
-            status: 'processing',
-            confirmation_state: 'approval-responded',
-          },
-        });
+        if (!skipConversationMessage && conversation) {
+          processingMessage = conversationService.addMessage({
+            conversationId: conversation.id,
+            projectId,
+            role: 'assistant',
+            content: '正在生成企业知识库草稿。若软件关闭或流程中断，可稍后在对话历史中恢复该任务。',
+            metadata: {
+              type: 'knowledge_draft_task',
+              draft: processingDraft,
+              status: 'processing',
+              confirmation_state: 'approval-responded',
+            },
+          });
+        }
         safeSend(event.sender, channel, {
           type: 'meta',
           task: 'knowledge_extraction',
-          conversation_id: conversation.id,
+          conversation_id: conversation?.id || null,
           project_id: projectId,
           draft: processingDraft,
           message: processingMessage,
@@ -726,7 +731,7 @@ function registerHandlers() {
         safeSend(event.sender, channel, { type: 'error', error, draft, can_proceed: false });
         return { type: 'error', error, draft, can_proceed: false };
       }
-      if (conversation) {
+      if (!skipConversationMessage && conversation) {
         const messagePayload = {
           messageId: processingMessage?.id,
           conversationId: conversation.id,
@@ -744,8 +749,8 @@ function registerHandlers() {
           : conversationService.addMessage({ ...messagePayload, role: 'assistant' });
         draft.conversation_id = conversation.id;
       }
-      safeSend(event.sender, channel, { type: 'done', draft, conversation_id: conversation?.id, project_id: projectId, message: draftMessage, can_proceed: true });
-      return { type: 'done', draft, conversation_id: conversation?.id, project_id: projectId, message: draftMessage, can_proceed: true };
+      safeSend(event.sender, channel, { type: 'done', draft, conversation_id: conversation?.id || null, project_id: projectId, message: draftMessage, can_proceed: true });
+      return { type: 'done', draft, conversation_id: conversation?.id || null, project_id: projectId, message: draftMessage, can_proceed: true };
     } catch (error) {
       const message = error.message || String(error);
       if (processingMessage && conversation) {
@@ -768,11 +773,10 @@ function registerHandlers() {
       }
       safeSend(event.sender, channel, { type: 'error', error: message, can_proceed: false });
       return { type: 'error', error: message, can_proceed: false };
+    } finally {
+      activeStreams.delete(requestId);
     }
-  } finally {
-    activeStreams.delete(requestId);
-  }
-});
+  });
   ipcMain.handle('geo-agent:confirm-knowledge-draft', async (_event, payload = {}) => {
     const response = await knowledgeService.confirmKnowledgeDraft(payload);
     const projectId = response.project_id;

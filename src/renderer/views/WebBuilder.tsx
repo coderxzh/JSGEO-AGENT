@@ -255,13 +255,14 @@ export function WebBuilder() {
           }
         }
       );
-      const website = await websitePromise;
+      const result = await websitePromise;
+      const website = result?.type === 'done' ? result.website : result;
       console.log('[WebBuilder] generate done:', website);
       // 生成完成，刷新列表
       await loadWebsites();
       // 自动进入预览
       if (website) {
-        handleSelectWebsite(website);
+        handleSelectWebsite(website as GeoAgentWebsite);
       }
     } catch (err: unknown) {
       console.error('[WebBuilder] generate failed:', err);

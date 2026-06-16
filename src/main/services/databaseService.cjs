@@ -639,7 +639,7 @@ function migrateSchema(database) {
       SELECT substr(replace(replace(content, char(10), ' '), char(13), ' '), 1, 120)
       FROM messages
       WHERE messages.conversation_id = conversations.id
-      ORDER BY datetime(created_at) DESC
+      ORDER BY created_at DESC
       LIMIT 1
     )
     WHERE last_message_preview IS NULL;

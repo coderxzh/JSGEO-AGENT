@@ -1,18 +1,32 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-function invokeStream(channelName, payload, onEvent, timeoutMs = 120000) {
+function invokeStream(channelName, payload, onEvent, timeoutMs = 1800000, idleTimeoutMs = 120000) {
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const channel = `${channelName}:${requestId}`;
   const promise = new Promise((resolve, reject) => {
+    let timeoutId = null;
+    let idleTimeoutId = null;
     const cleanup = () => {
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
+      if (idleTimeoutId) clearTimeout(idleTimeoutId);
       ipcRenderer.removeListener(channel, listener);
     };
-    const timeoutId = setTimeout(() => {
+    const startIdleTimeout = () => {
+      if (idleTimeoutId) clearTimeout(idleTimeoutId);
+      idleTimeoutId = setTimeout(() => {
+        cleanup();
+        ipcRenderer.invoke('geo-agent:cancel-stream', { requestId }).catch(() => undefined);
+        reject(new Error('长时间未收到后端响应，请稍后重试。'));
+      }, idleTimeoutMs);
+    };
+    timeoutId = setTimeout(() => {
       cleanup();
-      reject(new Error('请求超时，请稍后重试。'));
+      ipcRenderer.invoke('geo-agent:cancel-stream', { requestId }).catch(() => undefined);
+      reject(new Error('请求总时长超过限制，请稍后重试。'));
     }, timeoutMs);
+    startIdleTimeout();
     const listener = (_event, streamEvent) => {
+      startIdleTimeout();
       if (typeof onEvent === 'function') {
         onEvent(streamEvent);
       }
@@ -56,7 +70,8 @@ contextBridge.exposeInMainWorld('geoAgent', {
     const selectedModel = legacySignature ? selectedModelOrOptions : null;
     const options = legacySignature ? (optionsOrEvent || {}) : (selectedModelOrOptions || {});
     const onEvent = legacySignature ? maybeOnEvent : optionsOrEvent;
-    const timeoutMs = options.timeoutMs || 120000;
+    const timeoutMs = options.timeoutMs || 1800000;
+    const idleTimeoutMs = options.idleTimeoutMs || 120000;
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const channel = `geo-agent:chat-stream:${requestId}`;
     const payload = {
@@ -69,17 +84,29 @@ contextBridge.exposeInMainWorld('geoAgent', {
     };
 
     const promise = new Promise((resolve, reject) => {
+      let timeoutId = null;
+      let idleTimeoutId = null;
       const cleanup = () => {
-        clearTimeout(timeoutId);
+        if (timeoutId) clearTimeout(timeoutId);
+        if (idleTimeoutId) clearTimeout(idleTimeoutId);
         ipcRenderer.removeListener(channel, listener);
       };
-      const timeoutId = setTimeout(() => {
+      const startIdleTimeout = () => {
+        if (idleTimeoutId) clearTimeout(idleTimeoutId);
+        idleTimeoutId = setTimeout(() => {
+          cleanup();
+          ipcRenderer.invoke('geo-agent:cancel-stream', { requestId }).catch(() => undefined);
+          reject(new Error('长时间未收到后端响应，请稍后重试。'));
+        }, idleTimeoutMs);
+      };
+      timeoutId = setTimeout(() => {
         cleanup();
-        // 超时后尝试通知主进程取消，避免后台继续运行
         ipcRenderer.invoke('geo-agent:cancel-stream', { requestId }).catch(() => undefined);
-        reject(new Error('请求超时，请稍后重试。'));
+        reject(new Error('请求总时长超过限制，请稍后重试。'));
       }, timeoutMs);
+      startIdleTimeout();
       const listener = (_event, streamEvent) => {
+        startIdleTimeout();
         if (typeof onEvent === 'function') {
           onEvent(streamEvent);
         }
@@ -104,7 +131,8 @@ contextBridge.exposeInMainWorld('geoAgent', {
   },
   runAgentStream: (message, conversationId, options = {}, onEvent) => {
     const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const timeoutMs = options.timeoutMs || 120000;
+    const timeoutMs = options.timeoutMs || 1800000;
+    const idleTimeoutMs = options.idleTimeoutMs || 120000;
     const channel = `geo-agent:run-agent-stream:${requestId}`;
     const payload = {
       message,
@@ -115,17 +143,30 @@ contextBridge.exposeInMainWorld('geoAgent', {
     };
     const promise = new Promise((resolve, reject) => {
       let settled = false;
+      let timeoutId = null;
+      let idleTimeoutId = null;
       const cleanup = () => {
         settled = true;
-        clearTimeout(timeoutId);
+        if (timeoutId) clearTimeout(timeoutId);
+        if (idleTimeoutId) clearTimeout(idleTimeoutId);
         ipcRenderer.removeListener(channel, listener);
       };
-      const timeoutId = setTimeout(() => {
+      const startIdleTimeout = () => {
+        if (idleTimeoutId) clearTimeout(idleTimeoutId);
+        idleTimeoutId = setTimeout(() => {
+          cleanup();
+          ipcRenderer.invoke('geo-agent:cancel-stream', { requestId }).catch(() => undefined);
+          reject(new Error('长时间未收到后端响应，请稍后重试。'));
+        }, idleTimeoutMs);
+      };
+      timeoutId = setTimeout(() => {
         cleanup();
         ipcRenderer.invoke('geo-agent:cancel-stream', { requestId }).catch(() => undefined);
-        reject(new Error('请求超时，请稍后重试。'));
+        reject(new Error('请求总时长超过限制，请稍后重试。'));
       }, timeoutMs);
+      startIdleTimeout();
       const listener = (_event, streamEvent) => {
+        startIdleTimeout();
         if (typeof onEvent === 'function') {
           onEvent(streamEvent);
         }
@@ -278,5 +319,5 @@ contextBridge.exposeInMainWorld('geoAgent', {
   getWebsitePreviewBaseUrl: (websiteId) => ipcRenderer.invoke('geo-agent:get-website-preview-base-url', websiteId),
   deleteWebsite: (websiteId) => ipcRenderer.invoke('geo-agent:delete-website', websiteId),
   exportWebsite: (websiteId) => ipcRenderer.invoke('geo-agent:export-website', websiteId),
-  generateWebsiteStream: (projectId, options, onEvent) => invokeStream('geo-agent:generate-website-stream', { projectId, ...options }, onEvent),
+  generateWebsiteStream: (projectId, options, onEvent) => invokeStream('geo-agent:generate-website-stream', { projectId, ...options }, onEvent, 1200000),
 });

@@ -70,7 +70,7 @@ function listProjects() {
   const rows = db.prepare(`
     SELECT id, name, description, status, created_at, updated_at
     FROM projects
-    ORDER BY datetime(updated_at) DESC, datetime(created_at) DESC
+    ORDER BY updated_at DESC, created_at DESC
   `).all();
 
   return rows.map(projectRowToSummary);
@@ -158,7 +158,7 @@ function listKnowledgeProfiles() {
     ) entry_counts ON entry_counts.project_id = p.id
     WHERE p.status = 'active'
       AND (ep.project_id IS NOT NULL OR COALESCE(entry_counts.entry_count, 0) > 0)
-    ORDER BY datetime(p.updated_at) DESC, datetime(p.created_at) DESC
+    ORDER BY p.updated_at DESC, p.created_at DESC
   `).all();
 
   return rows.map(buildCompatibleProfile);
@@ -224,13 +224,13 @@ function computePlatformStages(db, projectId, platform, knowledgeReady) {
     questionSet = db.prepare(`
       SELECT id, status FROM geo_question_sets
       WHERE project_id = ? AND platform = ?
-      ORDER BY datetime(created_at) DESC LIMIT 1
+      ORDER BY created_at DESC LIMIT 1
     `).get(projectId, platform);
 
     discovery = db.prepare(`
       SELECT id, status FROM geo_source_discoveries
       WHERE project_id = ? AND platform = ?
-      ORDER BY datetime(created_at) DESC LIMIT 1
+      ORDER BY created_at DESC LIMIT 1
     `).get(projectId, platform);
 
     const articleRows = db.prepare(`
@@ -250,7 +250,7 @@ function computePlatformStages(db, projectId, platform, knowledgeReady) {
     visibilityCheck = db.prepare(`
       SELECT id, status FROM ai_visibility_checks
       WHERE project_id = ? AND platform = ?
-      ORDER BY datetime(created_at) DESC LIMIT 1
+      ORDER BY created_at DESC LIMIT 1
     `).get(projectId, platform);
 
     pendingRules = db.prepare(`
@@ -346,7 +346,7 @@ function listProjectsWithStageProgress() {
     ) entry_counts ON entry_counts.project_id = p.id
     WHERE p.status = 'active'
       AND (ep.project_id IS NOT NULL OR COALESCE(entry_counts.entry_count, 0) > 0)
-    ORDER BY datetime(p.updated_at) DESC, datetime(p.created_at) DESC
+    ORDER BY p.updated_at DESC, p.created_at DESC
   `).all();
 
   return rows.map(buildProjectProgress);

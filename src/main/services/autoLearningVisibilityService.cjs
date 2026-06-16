@@ -5,7 +5,7 @@ const { getDb } = require('./databaseService.cjs');
 const questionPoolService = require('./questionPoolService.cjs');
 const knowledgeService = require('./knowledgeService.cjs');
 const articlePublishService = require('./articlePublishService.cjs');
-const { responsesStream } = require('./llmGateway.cjs');
+const { streamLLM } = require('./llmGateway.cjs');
 const { getTaskPolicy } = require('./modelPolicyService.cjs');
 const { fieldText } = require('./profileFieldService.cjs');
 const {
@@ -126,12 +126,19 @@ function buildMessages({ profile, question, publishedUrls }) {
   ];
 }
 
+function normalizeForMatching(value) {
+  return String(value || '').replace(/\s+/g, '').toLowerCase();
+}
+
 function analyzeAnswer({ answer, raw, rawEvents, profile, publishedUrls }) {
   const companyName = fieldText(profile, 'company_name');
   const shortName = fieldText(profile, 'short_name');
   const aliases = [companyName, shortName].map(text).filter(Boolean);
   const body = String(answer || '');
-  const mentioned = aliases.some((alias) => body.includes(alias));
+  const normalizedBody = normalizeForMatching(body);
+  const normalizedAliases = aliases.map(normalizeForMatching).filter(Boolean);
+
+  const mentioned = normalizedAliases.some((alias) => normalizedBody.includes(alias));
 
   const citedUrls = extractUrlEvidenceFromRaw([raw, rawEvents, body], {});
   const citedUrlStrings = Array.from(new Set(citedUrls.map((item) => item.url).filter(Boolean)));
@@ -143,15 +150,26 @@ function analyzeAnswer({ answer, raw, rawEvents, profile, publishedUrls }) {
   const uniqueMatched = Array.from(new Set(matchedPublishedUrls));
   const effectiveMention = mentioned || uniqueMatched.length > 0;
 
+  const matchedAlias = aliases.find((alias) => body.includes(alias));
+  const rankingPosition = matchedAlias
+    ? Math.max(1, Math.min(10, Math.floor(body.indexOf(matchedAlias) / Math.max(body.length / 8, 1)) + 1))
+    : null;
+
   const competitorCandidates = Array.from(new Set(
-    (body.match(/[一-龥A-Za-z0-9（）()路]{2,24}(?:公司|门店|机构|品牌|供应商|厂家|平台)/g) || [])
-      .filter((item) => !aliases.some((alias) => item.includes(alias)))
+    (body.match(/[一-龥A-Za-z0-9（）()路]{2,24}(?:公司|门店|机构|品牌|供应商|厂家|平台)/gi) || [])
+      .filter((item) => {
+        const normalizedItem = normalizeForMatching(item);
+        return !normalizedAliases.some((alias) =>
+          normalizedItem.includes(alias) || alias.includes(normalizedItem)
+        );
+      })
       .slice(0, 8)
   ));
 
   return {
     target_mentioned: mentioned,
     effective_mention: effectiveMention,
+    ranking_position: rankingPosition,
     cited_urls: citedUrlStrings,
     matched_published_urls: uniqueMatched,
     competitors: competitorCandidates,
@@ -160,12 +178,13 @@ function analyzeAnswer({ answer, raw, rawEvents, profile, publishedUrls }) {
 
 async function runDoubaoAssistantSearch({ messages, onEvent }) {
   const policy = getTaskPolicy('auto_learning_visibility');
-  return responsesStream({
+  return streamLLM({
     messages,
     provider: policy.provider,
     model: policy.model,
     networkMode: policy.network_mode,
     deepThinking: policy.deep_thinking,
+    apiFamily: policy.api_family,
     taskType: policy.task_type,
     onEvent,
   });
@@ -216,7 +235,6 @@ async function runAutoLearningVisibility(geoProjectId, platform = DEFAULT_PLATFO
     onEvent?.({ type: 'question_result', result: item });
   }
 
-  const matchedCount = questionResults.filter((item) => item.matched_published_urls.length > 0).length;
   const effectiveCount = questionResults.filter((item) => item.effective_mention).length;
 
   const result = {
@@ -228,7 +246,6 @@ async function runAutoLearningVisibility(geoProjectId, platform = DEFAULT_PLATFO
     question_results: questionResults,
     visibility_rate: effectiveCount / questions.length,
     effective_mentions: effectiveCount,
-    matched_published_url_questions: matchedCount,
     total_questions: questions.length,
     missing_evidence: questionResults
       .filter((item) => !item.cited_urls.length)
@@ -278,7 +295,7 @@ function getLatestVisibilityCheck(geoProjectId, platform = DEFAULT_PLATFORM) {
   const row = getDb().prepare(`
     SELECT * FROM ai_visibility_checks
     WHERE project_id = ? AND platform = ?
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
     LIMIT 1
   `).get(projectId, platform);
   return row ? rowToCheck(row) : null;

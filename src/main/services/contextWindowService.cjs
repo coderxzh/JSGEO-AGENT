@@ -85,7 +85,7 @@ function workflowSummary(projectId) {
     SELECT stage_key, event_type, status, title, content, created_at
     FROM workflow_events
     WHERE project_id = ?
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
     LIMIT 8
   `).all(projectId);
   if (!events.length) return '';
@@ -100,7 +100,7 @@ function articleSummary(projectId) {
     SELECT id, article_type, status, draft_json, created_at
     FROM geo_article_drafts
     WHERE project_id = ?
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
     LIMIT 8
   `).all(projectId);
   if (!rows.length) return '';
@@ -124,7 +124,7 @@ function pendingActionSummary(projectId) {
     WHERE project_id = ?
       AND role = 'assistant'
       AND metadata_json LIKE '%approval-requested%'
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
     LIMIT 5
   `).all(projectId);
   if (!rows.length) return '';
@@ -143,7 +143,7 @@ function attachmentSummary(conversationId) {
     SELECT filename, mime_type, asset_status, content_preview, created_at
     FROM chat_attachments
     WHERE conversation_id = ?
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
     LIMIT 5
   `).all(conversationId);
   if (!rows.length) return '';

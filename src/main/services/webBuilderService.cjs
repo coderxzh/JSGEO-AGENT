@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const http = require('node:http');
 const crypto = require('node:crypto');
+const AdmZip = require('adm-zip');
 const { app, dialog, shell } = require('electron');
 const knowledgeService = require('./knowledgeService.cjs');
 const skillService = require('./skillService.cjs');
@@ -362,27 +363,14 @@ async function exportWebsiteZip(websiteId) {
     return { success: false, canceled: true };
   }
 
-  // 收集所有 HTML 文件
-  const files = fs.readdirSync(storageDir).filter((f) => f.endsWith('.html'));
-  // 使用 Electron 的 shell 打开文件夹作为备选方案
-  // 简单方案：复制整个目录到用户选择的位置（作为文件夹）
-  const outDir = result.filePath.replace(/\.zip$/i, '');
-  fs.mkdirSync(outDir, { recursive: true });
-  for (const file of files) {
-    fs.copyFileSync(path.join(storageDir, file), path.join(outDir, file));
-  }
-  // 也复制非 HTML 的资源文件
-  const allFiles = fs.readdirSync(storageDir);
-  for (const file of allFiles) {
-    const src = path.join(storageDir, file);
-    const dest = path.join(outDir, file);
-    if (fs.statSync(src).isFile() && !files.includes(file)) {
-      fs.copyFileSync(src, dest);
-    }
-  }
+  // 生成真正的 zip 压缩包
+  const zip = new AdmZip();
+  zip.addLocalFolder(storageDir);
+  const zipPath = result.filePath.endsWith('.zip') ? result.filePath : `${result.filePath}.zip`;
+  zip.writeZip(zipPath);
 
-  shell.showItemInFolder(outDir);
-  return { success: true, path: outDir };
+  shell.showItemInFolder(zipPath);
+  return { success: true, path: zipPath };
 }
 
 // ---------------------------------------------------------------------------
@@ -427,7 +415,7 @@ async function buildKnowledgeContext(projectId) {
 /**
  * 构建 LLM 消息
  */
-function buildPlanMessages(skillContent, knowledgeContext, userRequirements) {
+function buildPlanMessages(skillContent, knowledgeContext, userRequirements, brandColor = '#1a73e8') {
   const { profile, chunks } = knowledgeContext;
   // 从画像中提取关键信息
   const profileData = profile?.profile || {};
@@ -454,6 +442,11 @@ ${JSON.stringify(evidenceFields, null, 2)}
 知识库内容：
 ${chunksText || '（暂无知识库内容）'}
 
+## 品牌配置
+
+品牌主色：${brandColor}
+请确保站点规划中包含 brand_color 字段，值为该品牌主色。
+
 ## 用户需求
 
 ${userRequirements || '（用户未提供额外要求，请根据企业数据自动生成合适的网站结构）'}`;
@@ -464,7 +457,7 @@ ${userRequirements || '（用户未提供额外要求，请根据企业数据自
   ];
 }
 
-function buildPageMessages(skillContent, sitePlan, pageInfo, knowledgeContext, previousPagesSummary) {
+function buildPageMessages(skillContent, sitePlan, pageInfo, knowledgeContext, previousPagesSummary, brandColor = '#1a73e8') {
   const { profile, chunks } = knowledgeContext;
   const profileData = profile?.profile || {};
   const evidenceFields = {};
@@ -496,7 +489,12 @@ ${chunksText || '（暂无知识库内容）'}
 
 ## 已生成的页面摘要
 
-${previousPagesSummary || '（这是第一个页面）'}`;
+${previousPagesSummary || '（这是第一个页面）'}
+
+## 品牌配置
+
+品牌主色：${brandColor}
+生成页面时，必须将该颜色作为主题主色使用：用于按钮背景、重点标题、链接、悬停状态、关键装饰线等。不要只使用默认蓝色或黑色。`;
 
   return [
     { role: 'system', content: systemPrompt },
@@ -555,7 +553,7 @@ async function generateWebsite(projectId, options = {}, onEvent = null) {
 
     // 3. Phase 1 — 生成站点规划
     onEvent?.({ type: 'status', message: '正在生成站点规划...' });
-    const planMessages = buildPlanMessages(skillContent, knowledgeContext, userRequirements);
+    const planMessages = buildPlanMessages(skillContent, knowledgeContext, userRequirements, brandColor);
     const planPolicy = getTaskPolicy('website_generation');
 
     const planResult = await streamLLM({
@@ -633,7 +631,7 @@ async function generateWebsite(projectId, options = {}, onEvent = null) {
 
       try {
         const pageMessages = buildPageMessages(
-          skillContent, sitePlan, pageInfo, knowledgeContext, previousSummary
+          skillContent, sitePlan, pageInfo, knowledgeContext, previousSummary, brandColor
         );
 
         const pageResult = await streamLLM({

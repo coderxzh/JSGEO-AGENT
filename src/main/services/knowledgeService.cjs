@@ -381,7 +381,7 @@ function getIndexStatus(projectId = null) {
     SELECT *
     FROM knowledge_assets
     WHERE project_id = ?
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
     LIMIT 20
   `).all(projectId);
   return {
@@ -559,7 +559,7 @@ async function embedPendingChunks(projectId) {
     FROM knowledge_chunks kc
     LEFT JOIN knowledge_chunk_embeddings kce ON kce.chunk_id = kc.id
     WHERE kc.project_id = ? AND kce.chunk_id IS NULL
-    ORDER BY datetime(kc.created_at) ASC
+    ORDER BY kc.created_at ASC
     LIMIT 200
   `).all(projectId);
   await embedChunks(projectId, rows);
@@ -574,7 +574,7 @@ function listEntries(projectId, limit = 100) {
            'indexed' AS embedding_status, NULL AS error_message, created_at, updated_at
     FROM knowledge_entries
     WHERE project_id = ?
-    ORDER BY datetime(updated_at) DESC
+    ORDER BY updated_at DESC
     LIMIT ?
   `).all(projectId, Number(limit || 100));
   return { entries: rows.map(rowToEntry), total };
@@ -1467,7 +1467,7 @@ async function searchKnowledge(payload = {}) {
       LEFT JOIN knowledge_chunk_embeddings kce ON kce.chunk_id = kc.id
       WHERE kc.project_id = @projectId
         AND (kc.content LIKE @likeQuery OR kc.title LIKE @likeQuery)
-      ORDER BY datetime(kc.created_at) DESC
+      ORDER BY kc.created_at DESC
       LIMIT @limit
     `).all({ projectId, likeQuery: `%${query}%`, limit });
   }
@@ -1689,7 +1689,7 @@ function markInterruptedDrafts({ olderThanMs = 2 * 60 * 1000 } = {}) {
     SELECT *
     FROM knowledge_drafts
     WHERE status = 'processing'
-      AND datetime(updated_at) <= datetime(?)
+      AND updated_at <= datetime(?)
   `).all(cutoff);
   if (!drafts.length) {
     return { ok: true, interrupted: 0 };
@@ -1700,7 +1700,7 @@ function markInterruptedDrafts({ olderThanMs = 2 * 60 * 1000 } = {}) {
         error_message = COALESCE(error_message, '软件关闭或进程中断，知识库草稿未完成。'),
         updated_at = @updated_at
     WHERE status = 'processing'
-      AND datetime(updated_at) <= datetime(@cutoff)
+      AND updated_at <= datetime(@cutoff)
   `).run({ cutoff, updated_at: nowIso() });
   const messageRows = db.prepare(`
     SELECT *

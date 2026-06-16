@@ -303,7 +303,7 @@ function getPublishedOrders(projectId) {
   const rows = getDb().prepare(`
     SELECT * FROM publish_orders
     WHERE project_id = ?
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
   `).all(projectId);
 
   return rows.map((row) => ({

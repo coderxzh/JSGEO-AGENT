@@ -500,6 +500,7 @@ declare global {
         target_mentioned?: boolean;
         effective_mention?: boolean;
         ranking_position?: number | null;
+        search_queries?: string[];
         cited_urls?: string[];
         matched_published_urls?: string[];
         competitors?: string[];
@@ -1420,7 +1421,7 @@ declare global {
           brand_color?: string;
         },
         onEvent?: (event: { type: string; [key: string]: unknown }) => void
-      ) => GeoAgentStreamHandle<GeoAgentWebsite>;
+      ) => GeoAgentStreamHandle<{ type: 'done'; website?: GeoAgentWebsite }>;
     };
   }
 }

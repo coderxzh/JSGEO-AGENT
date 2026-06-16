@@ -493,7 +493,7 @@ function markKnowledgeDraftConfirmed({ conversationId, projectId, draftId }) {
     SELECT *
     FROM messages
     WHERE conversation_id = ? AND project_id = ? AND role = 'assistant'
-    ORDER BY datetime(created_at) ASC
+    ORDER BY created_at ASC
   `).all(conversationId, projectId);
 
   const draftMessage = rows.find((row) => {
@@ -563,7 +563,7 @@ async function maybeUpdateConversationSummary(conversationId, reason = 'manual')
     SELECT *
     FROM messages
     WHERE conversation_id = ?
-    ORDER BY datetime(created_at) ASC
+    ORDER BY created_at ASC
   `).all(conversationId).map(rowToMessage);
   if (messages.length < 2) {
     return { updated: false, conversation: rowToConversation(row) };
@@ -638,7 +638,7 @@ function hydrateConversationRows(rows) {
     SELECT *
     FROM messages
     WHERE conversation_id = ?
-    ORDER BY datetime(created_at) ASC
+    ORDER BY created_at ASC
   `);
   return rows.map((row) => {
     const messages = messageQuery.all(row.id).map(rowToMessage);
@@ -664,7 +664,7 @@ async function listConversations(projectId = null, limit = 40, options = {}) {
       SELECT *
       FROM conversations
       WHERE project_id = ?
-      ORDER BY datetime(updated_at) DESC
+      ORDER BY updated_at DESC
       LIMIT ?
     `).all(projectId, normalizedLimit);
   } else {
@@ -673,7 +673,7 @@ async function listConversations(projectId = null, limit = 40, options = {}) {
       SELECT *
       FROM conversations
       WHERE project_id IS NULL
-      ORDER BY datetime(updated_at) DESC
+      ORDER BY updated_at DESC
       LIMIT ?
     `).all(normalizedLimit);
   }
@@ -714,7 +714,7 @@ async function listRecoverableDraftConversations(limit = 20, options = {}) {
             AND m.metadata_json LIKE '%knowledge_draft_request%'
         )
       )
-    ORDER BY datetime(c.updated_at) DESC
+    ORDER BY c.updated_at DESC
     LIMIT ?
   `).all(normalizedLimit);
   const visibleRows = hydrateConversationRows(rows.filter((row) => !isPlaceholderOnlyConversation(row.id)))
@@ -749,7 +749,7 @@ async function getConversation(conversationId, options = {}) {
     SELECT *
     FROM messages
     WHERE conversation_id = ?
-    ORDER BY datetime(created_at) ASC
+    ORDER BY created_at ASC
   `).all(conversationId);
   return {
     conversation: rowToConversation(hydratedConversation),
@@ -784,20 +784,20 @@ function findLatestConversation(projectId, kind = null) {
   let row;
   if (projectId && kind) {
     row = db.prepare(
-      `SELECT * FROM conversations WHERE project_id = ? AND kind = ? ORDER BY datetime(updated_at) DESC LIMIT 1`
+      `SELECT * FROM conversations WHERE project_id = ? AND kind = ? ORDER BY updated_at DESC LIMIT 1`
     ).get(projectId, kind);
   } else if (projectId) {
     row = db.prepare(
-      `SELECT * FROM conversations WHERE project_id = ? ORDER BY datetime(updated_at) DESC LIMIT 1`
+      `SELECT * FROM conversations WHERE project_id = ? ORDER BY updated_at DESC LIMIT 1`
     ).get(projectId);
   } else if (kind) {
     row = db.prepare(
-      `SELECT * FROM conversations WHERE project_id IS NULL AND kind = ? ORDER BY datetime(updated_at) DESC LIMIT 1`
+      `SELECT * FROM conversations WHERE project_id IS NULL AND kind = ? ORDER BY updated_at DESC LIMIT 1`
     ).get(kind);
   } else {
     // projectId 为 null 时查找公共对话
     row = db.prepare(
-      `SELECT * FROM conversations WHERE project_id IS NULL ORDER BY datetime(updated_at) DESC LIMIT 1`
+      `SELECT * FROM conversations WHERE project_id IS NULL ORDER BY updated_at DESC LIMIT 1`
     ).get();
   }
   return row ? rowToConversation(row) : null;
@@ -811,7 +811,7 @@ function findRunningPhaseMessage({ conversationId, projectId, phase, platform })
     SELECT *
     FROM messages
     WHERE conversation_id = ? AND project_id = ? AND role = 'assistant'
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
     LIMIT 30
   `).all(conversationId, projectId);
   const match = rows.find((row) => {

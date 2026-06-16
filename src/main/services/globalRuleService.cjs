@@ -1,6 +1,9 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const { getDb } = require('./databaseService.cjs');
+const { chatCompletion, parseJsonContent } = require('./llmGateway.cjs');
+const { getTaskPolicy } = require('./modelPolicyService.cjs');
 
 const BATCH_SIZE = 20;
 
@@ -54,11 +57,110 @@ function getExistingGlobalRules() {
  */
 function createGlobalRule(pattern) {
   const db = getDb();
-  const id = `gr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const id = `gr-${crypto.randomUUID()}`;
   db.prepare(`
     INSERT INTO evolution_rules (id, project_id, scope, platform, rule_type, content, evidence_count, confidence, status, target_stages, created_at, updated_at)
     VALUES (?, NULL, 'global', ?, ?, ?, 1, ?, 'confirmed', '[4]', datetime('now'), datetime('now'))
   `).run(id, pattern.platform || null, pattern.rule_type, pattern.content, pattern.confidence || 0.7);
+  return id;
+}
+
+function jsonParse(value, fallback = {}) {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function text(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function buildExtractionMessages(article) {
+  const draft = jsonParse(article.draft_json, {});
+  const content = text(draft.content || draft.body || article.content || '');
+  const title = text(draft.title || article.title || '');
+  return [
+    {
+      role: 'system',
+      content: '你是 GEO 全局规则提取专家。请分析给定的文章标题和正文，提取可复用的标题模式和结构模式。只输出 JSON，不要任何解释。',
+    },
+    {
+      role: 'user',
+      content: JSON.stringify({
+        task: 'extract_global_patterns',
+        article: {
+          title,
+          content: content.slice(0, 4000),
+          article_role: draft.article_role || article.article_role || '',
+        },
+        required_output: {
+          patterns: [
+            {
+              rule_type: 'title | structure',
+              content: '模式描述，例如："使用数字+痛点词的标题结构" 或 "先给出行业判断标准、再罗列企业事实证据、最后给出推荐理由的文章结构"',
+              confidence: 0.8,
+            },
+          ],
+        },
+      }, null, 2),
+    },
+  ];
+}
+
+function normalizePattern(pattern) {
+  return {
+    rule_type: String(pattern.rule_type || '').toLowerCase(),
+    content: text(pattern.content || ''),
+    confidence: Math.max(0, Math.min(1, Number(pattern.confidence || 0.7))),
+    platform: pattern.platform || null,
+  };
+}
+
+async function extractPatternsFromArticle(article) {
+  try {
+    const policy = getTaskPolicy('global_rule_extraction');
+    const response = await chatCompletion({
+      messages: buildExtractionMessages(article),
+      temperature: 0.2,
+      maxTokens: 2000,
+      provider: policy.provider,
+      model: policy.model,
+    });
+    const parsed = parseJsonContent(response.content);
+    const rawPatterns = Array.isArray(parsed?.patterns) ? parsed.patterns : [];
+    return rawPatterns
+      .map(normalizePattern)
+      .filter((p) => p.content && ['title', 'structure'].includes(p.rule_type));
+  } catch (err) {
+    console.error(`[GlobalRuleService] 文章 ${article.id} 模式提取失败:`, err.message);
+    return [];
+  }
+}
+
+function mergePatternsIntoGlobalRules(patterns, existingRules) {
+  let created = 0;
+  let updated = 0;
+
+  for (const pattern of patterns) {
+    const existing = existingRules.find((rule) =>
+      rule.rule_type === pattern.rule_type && rule.content === pattern.content
+    );
+
+    if (existing) {
+      const newEvidenceCount = (existing.evidence_count || 0) + 1;
+      const newConfidence = calculateConfidence(newEvidenceCount);
+      updateRuleConfidence(existing.id, newEvidenceCount, newConfidence);
+      updated += 1;
+    } else {
+      createGlobalRule(pattern);
+      created += 1;
+    }
+  }
+
+  return { created, updated };
 }
 
 /**
@@ -129,7 +231,7 @@ function decayStaleRules() {
     SELECT * FROM evolution_rules
     WHERE scope = 'global' AND status = 'confirmed'
     AND rule_type IN ('title', 'structure')
-    AND datetime(updated_at) < datetime('now', '-3 days')
+    AND updated_at < datetime('now', '-3 days')
   `).all();
 
   for (const rule of staleRules) {
@@ -148,4 +250,6 @@ module.exports = {
   decayStaleRules,
   getState,
   setState,
+  extractPatternsFromArticle,
+  mergePatternsIntoGlobalRules,
 };

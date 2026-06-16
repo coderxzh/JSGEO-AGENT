@@ -49,7 +49,7 @@ function getLatestPublishOrder(articleId) {
     SELECT *
     FROM publish_orders
     WHERE article_id = ?
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
     LIMIT 1
   `).get(articleId);
   if (!row) return null;
@@ -118,7 +118,7 @@ function listArticleDrafts(projectIdOrGeoId, filters = {}) {
   const rows = getDb().prepare(`
     SELECT * FROM geo_article_drafts
     WHERE project_id = ?
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
   `).all(projectId);
 
   let drafts = rows.map(rowToDraft);

@@ -468,7 +468,7 @@ function getLatestOrderByArticle(articleId) {
     SELECT *
     FROM publish_orders
     WHERE article_id = ? AND provider = ?
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
     LIMIT 1
   `).get(articleId, PROVIDER);
   return row ? rowToOrder(row) : null;
@@ -629,7 +629,7 @@ async function syncOrdersByProject(projectId) {
     SELECT *
     FROM publish_orders
     WHERE project_id = ? AND provider = ?
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
   `).all(projectId, PROVIDER);
   const result = [];
   const groups = rows.reduce((acc, row) => {

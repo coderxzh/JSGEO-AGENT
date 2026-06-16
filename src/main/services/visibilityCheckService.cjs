@@ -120,12 +120,19 @@ function buildMessages({ profile, question, publishedUrls }) {
   ];
 }
 
+function normalizeForMatching(value) {
+  return String(value || '').replace(/\s+/g, '').toLowerCase();
+}
+
 function analyzeAnswer({ answer, profile, publishedUrls }) {
   const companyName = fieldText(profile, 'company_name');
   const shortName = fieldText(profile, 'short_name');
   const aliases = [companyName, shortName].map(text).filter(Boolean);
   const body = String(answer || '');
-  const mentioned = aliases.some((alias) => body.includes(alias));
+  const normalizedBody = normalizeForMatching(body);
+  const normalizedAliases = aliases.map(normalizeForMatching).filter(Boolean);
+
+  const mentioned = normalizedAliases.some((alias) => normalizedBody.includes(alias));
   const urls = extractUrls(body);
   const matchedPublishedUrls = publishedUrls
     .filter((item) => urls.includes(item.url) || body.includes(item.url))
@@ -136,8 +143,13 @@ function analyzeAnswer({ answer, profile, publishedUrls }) {
     ? Math.max(1, Math.min(10, Math.floor(body.indexOf(matchedAlias) / Math.max(body.length / 8, 1)) + 1))
     : null;
   const competitorCandidates = Array.from(new Set(
-    (body.match(/[\u4e00-\u9fa5A-Za-z0-9（）()路]{2,24}(?:公司|门店|机构|品牌|供应商|厂家|平台)/g) || [])
-      .filter((item) => !aliases.some((alias) => item.includes(alias)))
+    (body.match(/[\u4e00-\u9fa5A-Za-z0-9（）()路]{2,24}(?:公司|门店|机构|品牌|供应商|厂家|平台)/gi) || [])
+      .filter((item) => {
+        const normalizedItem = normalizeForMatching(item);
+        return !normalizedAliases.some((alias) =>
+          normalizedItem.includes(alias) || alias.includes(normalizedItem)
+        );
+      })
       .slice(0, 8)
   ));
   return {
@@ -248,7 +260,7 @@ function getLatestVisibilityCheck(geoProjectId, platform = 'doubao') {
   const row = getDb().prepare(`
     SELECT * FROM ai_visibility_checks
     WHERE project_id = ? AND platform = ?
-    ORDER BY datetime(created_at) DESC
+    ORDER BY created_at DESC
     LIMIT 1
   `).get(projectId, platform);
   return row ? rowToCheck(row) : null;
